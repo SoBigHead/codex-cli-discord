@@ -1,0 +1,22 @@
+{
+  "name": "codex-cli-discord",
+  "version": "0.1.0",
+  "description": "A tiny Discord bot that bridges Codex CLI (codex exec --json) into Discord threads.",
+  "license": "MIT",
+  "author": "ATou",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "patch-ws": "node scripts/patch-discord-ws.mjs",
+    "postinstall": "node scripts/patch-discord-ws.mjs"
+  },
+  "dependencies": {
+    "discord.js": "^14.19.3",
+    "dotenv": "^16.6.1",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.6",
+    "socks-proxy-agent": "^8.0.5",
+    "undici": "^7.22.0"
+  }
+}
