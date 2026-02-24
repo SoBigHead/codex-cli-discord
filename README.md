@@ -35,15 +35,15 @@ npm start
 
 Then in your Discord server, invite the bot, and use these slash commands:
 
-- `/status` — show current thread config
-- `/setdir <path>` — set workspace dir for current thread
-- `/model <name|default>` — set model override
-- `/effort <high|medium|low|default>` — set reasoning effort
-- `/mode <safe|dangerous>` — set execution mode
-- `/name <label>` — name the session (for display)
-- `/reset` — clear current thread session
-- `/resume <session_id>` — bind an existing Codex session id
-- `/sessions` — list recent local Codex sessions
+- `/cx_status` — show current thread config
+- `/cx_setdir <path>` — set workspace dir for current thread
+- `/cx_model <name|default>` — set model override
+- `/cx_effort <high|medium|low|default>` — set reasoning effort
+- `/cx_mode <safe|dangerous>` — set execution mode
+- `/cx_name <label>` — name the session (for display)
+- `/cx_reset` — clear current thread session
+- `/cx_resume <session_id>` — bind an existing Codex session id
+- `/cx_sessions` — list recent local Codex sessions
 
 ## Configuration (.env)
 
@@ -52,6 +52,7 @@ See `.env.example`.
 Important knobs:
 
 - `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended)
+- `SLASH_PREFIX`: slash prefix, default `cx` (e.g. `/cx_status`)
 - `DEFAULT_MODE`: `safe` or `dangerous`
 - `WORKSPACE_ROOT`: where per-thread folders are created
 

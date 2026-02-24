@@ -57,6 +57,7 @@ const DEFAULT_MODE = (process.env.DEFAULT_MODE || 'safe').toLowerCase() === 'dan
 const CODEX_TIMEOUT_MS = toInt(process.env.CODEX_TIMEOUT_MS, 30 * 60 * 1000);
 const SHOW_REASONING = String(process.env.SHOW_REASONING || 'false').toLowerCase() === 'true';
 const DEBUG_EVENTS = String(process.env.DEBUG_EVENTS || 'false').toLowerCase() === 'true';
+const SLASH_PREFIX = normalizeSlashPrefix(process.env.SLASH_PREFIX || 'cx');
 
 ensureDir(DATA_DIR);
 ensureDir(WORKSPACE_ROOT);
@@ -169,19 +170,19 @@ client.on('messageCreate', async (message) => {
 // ── Slash Commands ──────────────────────────────────────────────
 
 const slashCommands = [
-  new SlashCommandBuilder().setName('status').setDescription('查看当前 thread 的 Codex 配置'),
-  new SlashCommandBuilder().setName('reset').setDescription('清空当前会话，下条消息新开上下文'),
-  new SlashCommandBuilder().setName('sessions').setDescription('列出最近的 Codex sessions'),
+  new SlashCommandBuilder().setName(slashName('status')).setDescription('查看当前 thread 的 Codex 配置'),
+  new SlashCommandBuilder().setName(slashName('reset')).setDescription('清空当前会话，下条消息新开上下文'),
+  new SlashCommandBuilder().setName(slashName('sessions')).setDescription('列出最近的 Codex sessions'),
   new SlashCommandBuilder()
-    .setName('setdir')
+    .setName(slashName('setdir'))
     .setDescription('设置当前 thread 的工作目录')
     .addStringOption(o => o.setName('path').setDescription('绝对路径，如 ~/GitHub/my-project').setRequired(true)),
   new SlashCommandBuilder()
-    .setName('model')
+    .setName(slashName('model'))
     .setDescription('切换 Codex 模型')
     .addStringOption(o => o.setName('name').setDescription('模型名（如 o3, gpt-5.3-codex）或 default').setRequired(true)),
   new SlashCommandBuilder()
-    .setName('effort')
+    .setName(slashName('effort'))
     .setDescription('设置 reasoning effort')
     .addStringOption(o => o.setName('level').setDescription('推理力度').setRequired(true)
       .addChoices(
@@ -191,7 +192,7 @@ const slashCommands = [
         { name: 'default', value: 'default' },
       )),
   new SlashCommandBuilder()
-    .setName('mode')
+    .setName(slashName('mode'))
     .setDescription('执行模式')
     .addStringOption(o => o.setName('type').setDescription('模式').setRequired(true)
       .addChoices(
@@ -199,11 +200,11 @@ const slashCommands = [
         { name: 'dangerous (无 sandbox 无审批)', value: 'dangerous' },
       )),
   new SlashCommandBuilder()
-    .setName('name')
+    .setName(slashName('name'))
     .setDescription('给当前 session 起个名字，方便识别')
     .addStringOption(o => o.setName('label').setDescription('名字，如「cc-hub诊断」「埋点重构」').setRequired(true)),
   new SlashCommandBuilder()
-    .setName('resume')
+    .setName(slashName('resume'))
     .setDescription('继承一个已有的 Codex session')
     .addStringOption(o => o.setName('session_id').setDescription('Codex session UUID').setRequired(true)),
 ];
@@ -230,9 +231,18 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
+  if (!(await isAllowedInteractionChannel(interaction))) {
+    await interaction.reply({ content: '⛔ 当前频道未开放。', flags: 64 });
+    return;
+  }
+
   const key = interaction.channelId;
+  if (!key) {
+    await interaction.reply({ content: '❌ 无法识别当前频道。', flags: 64 });
+    return;
+  }
   const session = getSession(key);
-  const cmd = interaction.commandName;
+  const cmd = normalizeSlashCommandName(interaction.commandName);
 
   try {
     switch (cmd) {
@@ -269,22 +279,15 @@ client.on('interactionCreate', async (interaction) => {
 
       case 'sessions': {
         try {
-          const home = process.env.HOME || process.env.USERPROFILE || '';
-          const sessionsDir = path.join(home, '.codex', 'sessions');
-          const dirs = fs.readdirSync(sessionsDir)
-            .filter(d => { try { return fs.statSync(path.join(sessionsDir, d)).isDirectory(); } catch { return false; } })
-            .map(d => ({ id: d, mtime: fs.statSync(path.join(sessionsDir, d)).mtimeMs }))
-            .sort((a, b) => b.mtime - a.mtime)
-            .slice(0, 10);
-
-          if (!dirs.length) {
+          const sessions = listRecentCodexSessions(10);
+          if (!sessions.length) {
             await interaction.reply({ content: '没有找到任何 Codex session。', flags: 64 });
             break;
           }
 
-          const lines = dirs.map((d, i) => `${i + 1}. \`${d.id}\` (${humanAge(Date.now() - d.mtime)} ago)`);
+          const lines = sessions.map((s, i) => `${i + 1}. \`${s.id}\` (${humanAge(Date.now() - s.mtime)} ago)`);
           await interaction.reply({
-            content: ['**最近 Sessions**（用 `/resume` 继承）', ...lines].join('\n'),
+            content: [`**最近 Sessions**（用 \`${slashRef('resume')}\` 继承）`, ...lines].join('\n'),
             flags: 64,
           });
         } catch (err) {
@@ -441,25 +444,15 @@ async function handleCommand(message, key, content) {
 
     case '!sessions': {
       try {
-        const home = process.env.HOME || process.env.USERPROFILE || '';
-        const sessionsDir = path.join(home, '.codex', 'sessions');
-        const dirs = fs.readdirSync(sessionsDir)
-          .filter(d => fs.statSync(path.join(sessionsDir, d)).isDirectory())
-          .map(d => {
-            const stat = fs.statSync(path.join(sessionsDir, d));
-            return { id: d, mtime: stat.mtimeMs };
-          })
-          .sort((a, b) => b.mtime - a.mtime)
-          .slice(0, 10);
-
-        if (!dirs.length) {
+        const sessions = listRecentCodexSessions(10);
+        if (!sessions.length) {
           await message.reply('没有找到任何 Codex session。');
           break;
         }
 
-        const lines = dirs.map((d, i) => {
-          const ago = humanAge(Date.now() - d.mtime);
-          return `${i + 1}. \`${d.id}\` (${ago} ago)`;
+        const lines = sessions.map((s, i) => {
+          const ago = humanAge(Date.now() - s.mtime);
+          return `${i + 1}. \`${s.id}\` (${ago} ago)`;
         });
 
         await message.reply([
@@ -853,6 +846,36 @@ function parseCsvSet(value) {
   return new Set(value.split(',').map((s) => s.trim()).filter(Boolean));
 }
 
+function normalizeSlashPrefix(value) {
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/^_+|_+$/g, '');
+  if (!raw) return '';
+  return raw.slice(0, 12);
+}
+
+function slashName(base) {
+  const cmd = String(base || '').trim().toLowerCase();
+  if (!SLASH_PREFIX) return cmd;
+
+  const prefix = `${SLASH_PREFIX}_`;
+  const maxBaseLen = Math.max(1, 32 - prefix.length);
+  return `${prefix}${cmd.slice(0, maxBaseLen)}`;
+}
+
+function normalizeSlashCommandName(name) {
+  const raw = String(name || '').trim().toLowerCase();
+  if (!SLASH_PREFIX) return raw;
+  const prefix = `${SLASH_PREFIX}_`;
+  return raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
+}
+
+function slashRef(base) {
+  return `/${slashName(base)}`;
+}
+
 function isAllowedUser(userId) {
   if (!ALLOWED_USER_IDS) return true;
   return ALLOWED_USER_IDS.has(userId);
@@ -867,8 +890,91 @@ function isAllowedChannel(channel) {
   return Boolean(parentId && ALLOWED_CHANNEL_IDS.has(parentId));
 }
 
+async function isAllowedInteractionChannel(interaction) {
+  if (!ALLOWED_CHANNEL_IDS) return true;
+
+  const channelId = interaction.channelId;
+  if (channelId && ALLOWED_CHANNEL_IDS.has(channelId)) return true;
+
+  let channel = interaction.channel || null;
+  if (!channel && channelId) {
+    try {
+      channel = await interaction.client.channels.fetch(channelId);
+    } catch {
+      channel = null;
+    }
+  }
+  if (!channel) return false;
+
+  const parentId = channel.isThread?.() ? channel.parentId : null;
+  return Boolean(parentId && ALLOWED_CHANNEL_IDS.has(parentId));
+}
+
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
+}
+
+function listRecentCodexSessions(limit = 10) {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  const sessionsDir = path.join(home, '.codex', 'sessions');
+  if (!sessionsDir || !fs.existsSync(sessionsDir)) return [];
+
+  const files = findRolloutFiles(sessionsDir);
+  const latestById = new Map();
+
+  for (const file of files) {
+    const id = parseSessionIdFromRolloutFile(path.basename(file));
+    if (!id) continue;
+
+    let mtime = 0;
+    try {
+      mtime = fs.statSync(file).mtimeMs;
+    } catch {
+      continue;
+    }
+
+    const prev = latestById.get(id);
+    if (!prev || mtime > prev.mtime) {
+      latestById.set(id, { id, mtime });
+    }
+  }
+
+  return [...latestById.values()]
+    .sort((a, b) => b.mtime - a.mtime)
+    .slice(0, limit);
+}
+
+function findRolloutFiles(root) {
+  const out = [];
+  const stack = [root];
+
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name.startsWith('rollout-') && entry.name.endsWith('.jsonl')) {
+        out.push(fullPath);
+      }
+    }
+  }
+
+  return out;
+}
+
+function parseSessionIdFromRolloutFile(filename) {
+  const match = filename.match(/^rollout-.*-([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$/i);
+  return match?.[1] || null;
 }
 
 function loadDb() {
