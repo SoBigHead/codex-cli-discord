@@ -55,12 +55,26 @@ const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || path.join(ROOT, 'workspaces
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || null;
 const DEFAULT_MODE = (process.env.DEFAULT_MODE || 'safe').toLowerCase() === 'dangerous' ? 'dangerous' : 'safe';
 const CODEX_TIMEOUT_MS = toInt(process.env.CODEX_TIMEOUT_MS, 30 * 60 * 1000);
+const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const SHOW_REASONING = String(process.env.SHOW_REASONING || 'false').toLowerCase() === 'true';
 const DEBUG_EVENTS = String(process.env.DEBUG_EVENTS || 'false').toLowerCase() === 'true';
 const SLASH_PREFIX = normalizeSlashPrefix(process.env.SLASH_PREFIX || 'cx');
+const SPAWN_ENV = buildSpawnEnv(process.env);
 
 ensureDir(DATA_DIR);
 ensureDir(WORKSPACE_ROOT);
+
+const bootCodexHealth = getCodexCliHealth();
+if (bootCodexHealth.ok) {
+  console.log(`🧩 Codex CLI: ${bootCodexHealth.version} via ${bootCodexHealth.bin}`);
+} else {
+  console.warn([
+    '⚠️ Codex CLI 不可用，后续请求会失败。',
+    `• bin: ${bootCodexHealth.bin}`,
+    `• reason: ${bootCodexHealth.error}`,
+    '• 处理: 安装 codex CLI，或在 .env 里设置 CODEX_BIN=/绝对路径/codex，然后重启 bot。',
+  ].join('\n'));
+}
 
 // Read codex config.toml defaults for display
 function getCodexDefaults() {
@@ -249,6 +263,7 @@ client.on('interactionCreate', async (interaction) => {
       case 'status': {
         const wd = ensureWorkspace(session, key);
         const defaults = getCodexDefaults();
+        const codexHealth = getCodexCliHealth();
         const modeDesc = session.mode === 'dangerous'
           ? 'dangerous (无沙盒, 全权限)'
           : 'safe (沙盒隔离, 无网络)';
@@ -262,6 +277,7 @@ client.on('interactionCreate', async (interaction) => {
             `• mode: ${modeDesc}`,
             `• model: ${session.model || `${defaults.model} _(config.toml)_`}`,
             `• effort: ${session.effort || `${defaults.effort} _(config.toml)_`}`,
+            `• codex-cli: ${formatCodexHealth(codexHealth)}`,
             `• session: ${sessionLabel}`,
           ].join('\n'),
           flags: 64,
@@ -397,6 +413,7 @@ async function handleCommand(message, key, content) {
     case '!status': {
       const workspaceDir = ensureWorkspace(session, key);
       const defaults = getCodexDefaults();
+      const codexHealth = getCodexCliHealth();
       const modeDesc = session.mode === 'dangerous'
         ? 'dangerous (无沙盒, 全权限)'
         : 'safe (沙盒隔离, 无网络)';
@@ -406,6 +423,7 @@ async function handleCommand(message, key, content) {
         `• mode: ${modeDesc}`,
         `• model: ${session.model || `${defaults.model} _(config.toml)_`}`,
         `• effort: ${session.effort || `${defaults.effort} _(config.toml)_`}`,
+        `• codex-cli: ${formatCodexHealth(codexHealth)}`,
         `• codex session: \`${session.codexThreadId || '(none)'}\``,
         session.configOverrides?.length ? `• extra config: ${session.configOverrides.join(', ')}` : null,
       ].filter(Boolean).join('\n'));
@@ -564,12 +582,16 @@ async function handlePrompt(message, key, prompt) {
     clearInterval(typingInterval);
 
     if (!result.ok) {
+      const codexMissing = isCodexNotFound(result.error);
       const failText = [
         '❌ Codex 执行失败',
         result.error ? `• error: ${result.error}` : null,
         result.logs.length ? `• logs: ${truncate(result.logs.join('\n'), 1200)}` : null,
+        codexMissing ? '• 诊断: 当前环境找不到 Codex CLI 可执行文件。' : null,
+        codexMissing ? '• 处理: 在该设备安装 codex，或在 .env 配置 `CODEX_BIN=/绝对路径/codex`，然后重启 bot。' : null,
+        codexMissing ? `• 自检: 用 \`${slashRef('status')}\` 或 \`!status\` 查看 codex-cli 状态。` : null,
         '',
-        '可以先 `/reset` 再重试，或 `/status` 看状态。',
+        `可以先 \`${slashRef('reset')}\` 再重试，或 \`${slashRef('status')}\` 看状态。`,
       ].filter(Boolean).join('\n');
       await message.reply(failText);
       return;
@@ -601,7 +623,7 @@ async function runCodex({ session, workspaceDir, prompt }) {
   const args = buildCodexArgs({ session, workspaceDir, prompt });
 
   if (DEBUG_EVENTS) {
-    console.log('Running codex:', ['codex', ...args].join(' '));
+    console.log('Running codex:', [CODEX_BIN, ...args].join(' '));
   }
 
   const { ok, exitCode, signal, messages, reasonings, usage, threadId, logs, error } = await spawnCodex(args, workspaceDir);
@@ -643,9 +665,9 @@ function buildCodexArgs({ session, workspaceDir, prompt }) {
 
 function spawnCodex(args, cwd) {
   return new Promise((resolve) => {
-    const child = spawn('codex', args, {
+    const child = spawn(CODEX_BIN, args, {
       cwd,
-      env: process.env,
+      env: SPAWN_ENV,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
@@ -731,6 +753,9 @@ function spawnCodex(args, cwd) {
       if (resolved) return;
       resolved = true;
       clearTimeout(timeout);
+      if (err?.code === 'ENOENT') {
+        logs.push(`Command not found: ${CODEX_BIN}`);
+      }
       resolve({
         ok: false,
         exitCode: null,
@@ -854,6 +879,78 @@ function normalizeSlashPrefix(value) {
     .replace(/^_+|_+$/g, '');
   if (!raw) return '';
   return raw.slice(0, 12);
+}
+
+function buildSpawnEnv(env) {
+  const out = { ...env };
+  const home = out.HOME || out.USERPROFILE || '';
+  const delimiter = path.delimiter;
+  const rawPath = out.PATH || '';
+  const entries = rawPath.split(delimiter).filter(Boolean);
+  const seen = new Set(entries);
+
+  const extras = [
+    '/opt/homebrew/bin',
+    '/usr/local/bin',
+    '/usr/bin',
+    '/bin',
+    home ? path.join(home, '.local', 'bin') : null,
+    home ? path.join(home, 'bin') : null,
+  ].filter(Boolean);
+
+  for (const p of extras) {
+    if (!seen.has(p)) {
+      entries.push(p);
+      seen.add(p);
+    }
+  }
+
+  out.PATH = entries.join(delimiter);
+  return out;
+}
+
+function getCodexCliHealth() {
+  const check = spawnSync(CODEX_BIN, ['--version'], {
+    env: SPAWN_ENV,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+  });
+
+  if (check.error) {
+    return {
+      ok: false,
+      bin: CODEX_BIN,
+      error: safeError(check.error),
+    };
+  }
+
+  if (check.status !== 0) {
+    return {
+      ok: false,
+      bin: CODEX_BIN,
+      error: (check.stderr || check.stdout || `exit=${check.status}`).trim(),
+    };
+  }
+
+  const versionLine = (check.stdout || check.stderr || '').trim().split('\n')[0] || 'ok';
+  return {
+    ok: true,
+    bin: CODEX_BIN,
+    version: versionLine,
+  };
+}
+
+function formatCodexHealth(health) {
+  if (health.ok) return `✅ \`${health.bin}\` (${health.version})`;
+  if (isCodexNotFound(health.error)) {
+    return `❌ 未找到 \`${health.bin}\`（可在 .env 设置 CODEX_BIN=/绝对路径/codex）`;
+  }
+  return `❌ ${truncate(String(health.error || 'unknown error'), 220)}`;
+}
+
+function isCodexNotFound(errorText) {
+  const msg = String(errorText || '').toLowerCase();
+  return msg.includes('enoent') || msg.includes('not found');
 }
 
 function slashName(base) {
