@@ -21,6 +21,7 @@ A tiny Discord bot that bridges **Codex CLI** (`codex exec --json`) into Discord
 
 - Node.js 18+
 - `codex` CLI installed and working in your shell
+  - If running under pm2/launchd/systemd, you may need `CODEX_BIN=/absolute/path/to/codex` in `.env`
 - A **separate** Discord Application/Bot token (don’t reuse OpenClaw’s token)
 
 ## Quickstart
@@ -55,6 +56,25 @@ Important knobs:
 - `SLASH_PREFIX`: slash prefix, default `cx` (e.g. `/cx_status`)
 - `DEFAULT_MODE`: `safe` or `dangerous`
 - `WORKSPACE_ROOT`: where per-thread folders are created
+- `CODEX_BIN`: codex command/path (default `codex`)
+
+## Troubleshooting
+
+### `spawn codex ENOENT`
+
+This means the bot process cannot find the Codex CLI executable in its runtime environment.
+
+1. Check the installed path on that machine:
+```bash
+which codex
+```
+2. Put the absolute path into `.env`:
+```env
+CODEX_BIN=/opt/homebrew/bin/codex
+```
+3. Restart the bot process.
+
+You can also run `/cx_status` (or your custom slash prefix + `_status`) to see codex-cli health in bot output.
 
 ## Proxy / Clash setup (optional)
 
