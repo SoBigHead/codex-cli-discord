@@ -8,6 +8,8 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
+    "setup-hooks": "git config core.hooksPath .githooks",
+    "check:atomic": "scripts/check-atomic-commit.sh --staged",
     "patch-ws": "node scripts/patch-discord-ws.mjs",
     "postinstall": "node scripts/patch-discord-ws.mjs"
   },
