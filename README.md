@@ -22,6 +22,8 @@ A tiny Discord bot that bridges **Codex CLI** (`codex exec --json`) into Discord
   - per-channel prompt queue (messages are queued instead of rejected)
   - `/cancel` / `!abort` to interrupt the current run and clear queued prompts
   - long-run live progress updates (phase/elapsed/latest step), plus `/progress` / `!progress`
+  - `/doctor` / `!doctor` for runtime + security diagnostics
+  - `/onboarding` interactive step-by-step onboarding (buttons), `!onboarding` text fallback
 
 ## Prerequisites
 
@@ -58,6 +60,8 @@ Then in your Discord server, invite the bot, and use these slash commands:
 - `/cx_resume <session_id>` — bind an existing Codex session id
 - `/cx_sessions` — list recent local Codex sessions
 - `/cx_queue` — show running/queued task count in current channel
+- `/cx_doctor` — show bot runtime/security diagnostics
+- `/cx_onboarding` — interactive onboarding (step-by-step buttons, ephemeral)
 - `/cx_progress` — show latest progress snapshot for the running task
 - `/cx_cancel` — interrupt current run and clear queued prompts
 
@@ -68,6 +72,12 @@ See `.env.example`.
 Important knobs:
 
 - `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended)
+- `SECURITY_PROFILE`: `auto | solo | team | public`
+  - `auto`: DM -> `solo`; guild channel where `@everyone` can view -> `public`; else `team`
+- `MENTION_ONLY`: require bot mention for normal messages (leave empty to use profile default)
+- `MAX_QUEUE_PER_CHANNEL`: max queued prompts per channel (`0` = unlimited; leave empty to use profile default)
+- `ENABLE_CONFIG_CMD`: enable/disable `!config` command (default `false`)
+- `CONFIG_ALLOWLIST`: allowed keys for `!config key=value` (comma-separated, or `*` to allow all)
 - `SLASH_PREFIX`: slash prefix, default `cx` (e.g. `/cx_status`)
 - `DEFAULT_MODE`: `safe` or `dangerous`
 - `WORKSPACE_ROOT`: where per-thread folders are created

@@ -20,6 +20,8 @@
   - 按频道排队（新消息进入队列，不会被直接拒绝）
   - `/cancel` / `!abort` 可中断当前运行并清空队列
   - 长任务实时进度（阶段/耗时/最新步骤），并支持 `/progress` / `!progress`
+  - `/doctor` / `!doctor` 可做运行与安全配置体检
+  - `/onboarding` 可用按钮分步引导，`!onboarding` 提供文本版兜底
 
 ## 前置条件
 
@@ -56,6 +58,8 @@ Git hooks 说明：
 - `/cx_resume <session_id>` - 绑定已有 Codex 会话 ID
 - `/cx_sessions` - 列出本地最近 Codex 会话
 - `/cx_queue` - 查看当前频道运行中/排队任务数量
+- `/cx_doctor` - 查看 Bot 运行/安全体检信息
+- `/cx_onboarding` - 交互式新用户引导（分步按钮，ephemeral）
 - `/cx_progress` - 查看当前运行任务的最新进度快照
 - `/cx_cancel` - 中断当前运行并清空队列
 
@@ -66,6 +70,12 @@ Git hooks 说明：
 关键项：
 
 - `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`：限制可用范围（推荐）
+- `SECURITY_PROFILE`：`auto | solo | team | public`
+  - `auto`：DM -> `solo`；服务器内若 `@everyone` 可见频道则 `public`；否则 `team`
+- `MENTION_ONLY`：普通消息是否必须 @Bot（留空则使用 profile 默认）
+- `MAX_QUEUE_PER_CHANNEL`：每频道最大排队数（`0` 表示无限制；留空则使用 profile 默认）
+- `ENABLE_CONFIG_CMD`：是否启用 `!config`（默认 `false`）
+- `CONFIG_ALLOWLIST`：`!config key=value` 允许的 key（逗号分隔，或 `*` 表示全部允许）
 - `SLASH_PREFIX`：slash 前缀，默认 `cx`（例如 `/cx_status`）
 - `DEFAULT_MODE`：`safe` 或 `dangerous`
 - `WORKSPACE_ROOT`：按线程创建目录的根路径
