@@ -2,6 +2,8 @@
 
 A tiny Discord bot that bridges **Codex CLI** (`codex exec --json`) into Discord.
 
+[中文文档](./README.zh-CN.md)
+
 **Design:** 1 Discord **thread/channel = 1 Codex session** (auto `exec resume`).
 
 ## Features
