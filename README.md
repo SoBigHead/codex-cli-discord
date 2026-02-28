@@ -35,8 +35,14 @@ git clone <YOUR_REPO_URL>
 cd codex-cli-discord
 cp .env.example .env
 npm install
+npm run setup-hooks
 npm start
 ```
+
+Git hooks note:
+
+- Run `npm run setup-hooks` once after clone (or after re-clone).
+- The pre-commit atomic check is Node-based and works on macOS/Linux/Windows (no bash required).
 
 Then in your Discord server, invite the bot, and use these slash commands:
 
@@ -80,31 +86,50 @@ Important knobs:
   - `off`: disable compact behavior
 - `COMPACT_ON_THRESHOLD`: enable/disable threshold-triggered compact logic
 
-## Auto-upgrade Codex CLI (launchd)
+## Auto-upgrade Codex CLI (Optional Scheduler Adapter)
 
-This repo includes a launchd-based updater for `codex` (Homebrew Cask) that can:
+This repo includes a cross-platform updater for `codex` that can:
 
 - check for updates on a schedule
 - auto-upgrade `codex`
 - restart your bot service after a successful upgrade
 
-Install (default schedule: every day at `05:15`):
+Install (auto-select scheduler by OS: macOS=`launchd`, Windows=`Task Scheduler`, others=`none`):
 
 ```bash
-bash scripts/install-codex-auto-upgrade-launchd.sh
+npm run install:auto-upgrade
 ```
 
 Custom schedule (example: every day at `03:40`):
 
 ```bash
-SCHEDULE_HOUR=3 SCHEDULE_MINUTE=40 bash scripts/install-codex-auto-upgrade-launchd.sh
+SCHEDULE_HOUR=3 SCHEDULE_MINUTE=40 npm run install:auto-upgrade
+```
+
+Disable scheduler but keep manual updater:
+
+```bash
+AUTO_UPGRADE_SCHEDULER=none npm run install:auto-upgrade
 ```
 
 Manual run (for smoke test):
 
 ```bash
-bash scripts/codex-auto-upgrade.sh
+npm run run:auto-upgrade
 ```
+
+Manual run (dry-run; no package/service changes):
+
+```bash
+CODEX_UPGRADE_DRY_RUN=1 npm run run:auto-upgrade
+```
+
+### macOS (`launchd`)
+
+Default IDs:
+
+- Upgrade service label: `com.atou.codex-cli-auto-upgrade` (`LABEL`)
+- Bot service label: `com.atou.codex-discord-bot` (`BOT_LABEL`)
 
 Check service and logs:
 
@@ -121,6 +146,30 @@ launchctl bootout gui/$(id -u)/com.atou.codex-cli-auto-upgrade
 rm -f ~/Library/LaunchAgents/com.atou.codex-cli-auto-upgrade.plist
 ```
 
+### Windows (`Task Scheduler`)
+
+PowerShell install (equivalent to `npm run install:auto-upgrade`):
+
+```powershell
+$env:SCHEDULE_HOUR='5'
+$env:SCHEDULE_MINUTE='15'
+$env:TASK_NAME='codex-cli-auto-upgrade'
+$env:BOT_TASK_NAME='codex-discord-bot'
+node scripts/install-codex-auto-upgrade.mjs
+```
+
+Defaults:
+
+- Upgrade task name: `codex-cli-auto-upgrade` (`TASK_NAME` or `LABEL`)
+- Bot restart task: `codex-discord-bot` (`BOT_TASK_NAME` or `BOT_LABEL`)
+
+Inspect/remove task:
+
+```powershell
+schtasks /Query /TN "codex-cli-auto-upgrade" /V /FO LIST
+schtasks /Delete /TN "codex-cli-auto-upgrade" /F
+```
+
 ## Troubleshooting
 
 ### `spawn codex ENOENT`
@@ -134,6 +183,10 @@ which codex
 2. Put the absolute path into `.env`:
 ```env
 CODEX_BIN=/opt/homebrew/bin/codex
+```
+Windows example (PowerShell path):
+```env
+CODEX_BIN=C:\\Users\\<you>\\AppData\\Local\\Programs\\Codex\\codex.exe
 ```
 3. Restart the bot process.
 
