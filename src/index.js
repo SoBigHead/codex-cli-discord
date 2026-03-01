@@ -2096,48 +2096,60 @@ function formatOnboardingStepReport(step, key, session = null, channel = null, l
         `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
         `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
         `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
+        `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)}（${snapshot.profileSetting.source}）`,
         `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}（${snapshot.mentionHint}）`,
         `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
         `• queued prompts now: ${snapshot.runtime.queued}`,
-        `• !config: ${formatConfigCommandStatus()}`,
         '',
-        '下一步建议：按「下一步」走首跑 5 步。',
+        '请用按钮选择 `auto/solo/team/public`，然后点「下一步」。',
       ].join('\n');
     case 3:
       return [
-        '🧭 **Onboarding 3/4：首跑流程（5 步）**',
-        `1. \`${slashRef('doctor')}\` 或 \`!doctor\`，确认健康检查通过。`,
-        `2. \`${slashRef('status')}\` 或 \`!status\`，确认 mode/model/workspace。`,
-        `3. \`${slashRef('setdir')} <path>\` 或 \`!setdir <path>\`，绑定目标项目目录。`,
-        `4. 发送第一条任务：${snapshot.firstPromptHint}`,
-        `5. 如有积压，用 \`${slashRef('queue')}\` / \`!queue\` 查看；必要时 \`${slashRef('cancel')}\` / \`!abort\`。`,
+        '🧭 **Onboarding 3/4：超时设置**',
+        `• codex timeout（当前）：${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}（${snapshot.timeoutSetting.source}）`,
+        '• 快捷预设：off / 30s / 60s / 120s',
+        `• 自定义值：\`${slashRef('timeout')} <毫秒|off|status>\` 或 \`!timeout <毫秒|off|status>\``,
         '',
-        '下一步建议：按「下一步」查看默认安全建议。',
+        '请用按钮选择 timeout 预设，然后点「下一步」。',
       ].join('\n');
     case 4:
     default:
       return [
-        '🧭 **Onboarding 4/4：默认建议与排障入口**',
-        '• 先限制到 1 个频道 + 1 个管理员账号，再逐步放开。',
-        '• 保持 `ENABLE_CONFIG_CMD=false`；确实要开时仅白名单必要 key。',
-        '• 默认用 `safe`；仅在可信环境切到 `dangerous`。',
+        '🧭 **Onboarding 4/4：首跑流程（5 步）**',
+        `1. \`${slashRef('doctor')}\` 或 \`!doctor\`，确认健康检查通过。`,
+        `2. \`${slashRef('status')}\` 或 \`!status\`，确认 mode/model/workspace/profile/timeout。`,
+        `3. \`${slashRef('setdir')} <path>\` 或 \`!setdir <path>\`，绑定目标项目目录。`,
+        `4. 发送第一条任务：${snapshot.firstPromptHint}`,
+        `5. 如有积压，用 \`${slashRef('queue')}\` / \`!queue\` 查看；必要时 \`${slashRef('cancel')}\` / \`!abort\`。`,
         '',
-        `快速排障：\`${slashRef('doctor')}\` / \`!doctor\``,
-        `快速状态：\`${slashRef('status')}\` / \`!status\``,
-        `当前队列：\`${slashRef('queue')}\` / \`!queue\``,
-        '',
+        `当前设置：language=${formatLanguageLabel(snapshot.currentLanguage)}，profile=${formatSecurityProfileLabel(snapshot.profileSetting.profile)}，timeout=${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}`,
         '完成后点击「完成」关闭引导面板。',
       ].join('\n');
   }
 }
 
-function formatOnboardingDoneReport(key, channel = null) {
-  const snapshot = getOnboardingSnapshot(key, channel);
+function formatOnboardingDoneReport(key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
+  const lang = normalizeUiLanguage(language);
+  const snapshot = getOnboardingSnapshot(key, session, channel, lang);
+  if (lang === 'en') {
+    return [
+      '✅ **Onboarding Completed**',
+      `• active security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
+      `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}`,
+      `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
+      `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
+      `• codex timeout: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)} (${snapshot.timeoutSetting.source})`,
+      '',
+      `You can use: \`${slashRef('doctor')}\`, \`${slashRef('status')}\`, \`${slashRef('queue')}\``,
+    ].join('\n');
+  }
   return [
     '✅ **Onboarding 已完成**',
     `• 当前安全策略：${formatSecurityProfileDisplay(snapshot.security)}`,
     `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}`,
     `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
+    `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
+    `• codex timeout: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}（${snapshot.timeoutSetting.source}）`,
     '',
     `后续可直接使用：\`${slashRef('doctor')}\`、\`${slashRef('status')}\`、\`${slashRef('queue')}\``,
   ].join('\n');
@@ -2146,46 +2158,87 @@ function formatOnboardingDoneReport(key, channel = null) {
 async function handleOnboardingButtonInteraction(interaction) {
   const parsed = parseOnboardingButtonId(interaction.customId);
   if (!parsed) return;
+  const key = interaction.channelId;
+  const session = key ? getSession(key) : null;
+  const language = getSessionLanguage(session);
 
   if (parsed.userId !== interaction.user.id) {
     await interaction.reply({
-      content: `这个引导面板只对发起者可操作。请执行 \`${slashRef('onboarding')}\` 创建你自己的面板。`,
+      content: language === 'en'
+        ? `This onboarding panel is only controllable by its creator. Run \`${slashRef('onboarding')}\` to create your own panel.`
+        : `这个引导面板只对发起者可操作。请执行 \`${slashRef('onboarding')}\` 创建你自己的面板。`,
       flags: 64,
     });
     return;
   }
 
-  const key = interaction.channelId;
   if (!key) {
     await interaction.reply({ content: '❌ 无法识别当前频道。', flags: 64 });
     return;
   }
 
+  if (!isOnboardingEnabled(session)) {
+    await interaction.update({
+      content: formatOnboardingDisabledMessage(language),
+      components: [],
+    });
+    return;
+  }
+
+  if (parsed.action === 'set_lang') {
+    const selectedLanguage = parseUiLanguageInput(parsed.value);
+    if (selectedLanguage) {
+      session.language = selectedLanguage;
+      saveDb();
+    }
+  }
+
+  if (parsed.action === 'set_profile') {
+    const profile = parseSecurityProfileInput(parsed.value);
+    if (profile) {
+      session.securityProfile = profile;
+      saveDb();
+    }
+  }
+
+  if (parsed.action === 'set_timeout') {
+    const timeoutAction = parseTimeoutConfigAction(parsed.value);
+    if (timeoutAction?.type === 'set') {
+      session.timeoutMs = timeoutAction.timeoutMs;
+      saveDb();
+    }
+  }
+
+  const currentLanguage = getSessionLanguage(session);
+
   if (parsed.action === 'done') {
     await interaction.update({
-      content: formatOnboardingDoneReport(key, interaction.channel),
+      content: formatOnboardingDoneReport(key, session, interaction.channel, currentLanguage),
       components: [],
     });
     return;
   }
 
   await interaction.update({
-    content: formatOnboardingStepReport(parsed.step, key, interaction.channel),
-    components: buildOnboardingActionRows(parsed.step, interaction.user.id),
+    content: formatOnboardingStepReport(parsed.step, key, session, interaction.channel, currentLanguage),
+    components: buildOnboardingActionRows(parsed.step, interaction.user.id, session, currentLanguage),
   });
 }
 
-function createProgressReporter({ message, channelState }) {
+function createProgressReporter({ message, channelState, language = DEFAULT_UI_LANGUAGE }) {
   if (!PROGRESS_UPDATES_ENABLED) return null;
 
   const startedAt = Date.now();
+  const lang = normalizeUiLanguage(language);
   let progressMessage = null;
   let timer = null;
   let stopped = false;
   let lastEmitAt = 0;
   let lastRendered = '';
   let events = 0;
-  let latestStep = '任务已开始，等待 Codex 首个事件...';
+  let latestStep = lang === 'en'
+    ? 'Task started, waiting for the first Codex event...'
+    : '任务已开始，等待 Codex 首个事件...';
   let planState = cloneProgressPlan(channelState.activeRun?.progressPlan);
   const completedSteps = Array.isArray(channelState.activeRun?.completedSteps)
     ? [...channelState.activeRun.completedSteps]
