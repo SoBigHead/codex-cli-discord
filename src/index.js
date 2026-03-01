@@ -104,6 +104,9 @@ const CONFIG_POLICY = parseConfigAllowlist(
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || path.join(ROOT, 'workspaces');
 const DEFAULT_MODEL = process.env.DEFAULT_MODEL || null;
 const DEFAULT_MODE = (process.env.DEFAULT_MODE || 'safe').toLowerCase() === 'dangerous' ? 'dangerous' : 'safe';
+const DEFAULT_UI_LANGUAGE = normalizeUiLanguage(process.env.DEFAULT_UI_LANGUAGE || 'zh');
+const ONBOARDING_ENABLED_DEFAULT = parseOptionalBool(process.env.ONBOARDING_ENABLED_DEFAULT);
+const ONBOARDING_ENABLED_BY_DEFAULT = ONBOARDING_ENABLED_DEFAULT === null ? true : ONBOARDING_ENABLED_DEFAULT;
 const CODEX_TIMEOUT_MS = normalizeTimeoutMs(process.env.CODEX_TIMEOUT_MS, 0);
 const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const SHOW_REASONING = String(process.env.SHOW_REASONING || 'false').toLowerCase() === 'true';
@@ -156,6 +159,8 @@ console.log([
   `• MAX_QUEUE_PER_CHANNEL=${MAX_QUEUE_PER_CHANNEL_OVERRIDE === null ? 'profile-default' : MAX_QUEUE_PER_CHANNEL_OVERRIDE}`,
   `• ENABLE_CONFIG_CMD=${ENABLE_CONFIG_CMD}`,
   `• CONFIG_ALLOWLIST=${describeConfigPolicy()}`,
+  `• DEFAULT_UI_LANGUAGE=${DEFAULT_UI_LANGUAGE}`,
+  `• ONBOARDING_ENABLED_DEFAULT=${ONBOARDING_ENABLED_BY_DEFAULT}`,
 ].join('\n'));
 
 // Read codex config.toml defaults for display
@@ -231,7 +236,9 @@ function bindClientHandlers(bot) {
       if (message.system) return;
       if (!isAllowedUser(message.author.id)) return;
       const channelAllowed = isAllowedChannel(message.channel);
-      const security = resolveSecurityContext(message.channel);
+      const key = message.channel.id;
+      const session = getSession(key);
+      const security = resolveSecurityContext(message.channel, session);
 
       // Debug: log all incoming messages
       const chId = message.channel.id;
@@ -246,7 +253,6 @@ function bindClientHandlers(bot) {
         .replace(new RegExp(`<@!?${bot.user.id}>`, 'g'), '')
         .trim();
       const isCommand = rawContent.startsWith('!');
-      const key = message.channel.id;
 
       if (isCommand) {
         await handleCommand(message, key, rawContent);
@@ -346,6 +352,38 @@ const slashCommands = [
   new SlashCommandBuilder()
     .setName(slashName('onboarding'))
     .setDescription('新用户引导：安装后检查与首跑步骤（按钮分步）'),
+  new SlashCommandBuilder()
+    .setName(slashName('onboarding_config'))
+    .setDescription('配置 onboarding 开关（当前频道）')
+    .addStringOption(o => o.setName('action').setDescription('操作').setRequired(true)
+      .addChoices(
+        { name: 'on', value: 'on' },
+        { name: 'off', value: 'off' },
+        { name: 'status', value: 'status' },
+      )),
+  new SlashCommandBuilder()
+    .setName(slashName('language'))
+    .setDescription('设置消息提示语言（中文/English）')
+    .addStringOption(o => o.setName('name').setDescription('语言').setRequired(true)
+      .addChoices(
+        { name: '中文', value: 'zh' },
+        { name: 'English', value: 'en' },
+      )),
+  new SlashCommandBuilder()
+    .setName(slashName('profile'))
+    .setDescription('设置当前频道 security profile（auto/solo/team/public）')
+    .addStringOption(o => o.setName('name').setDescription('profile').setRequired(true)
+      .addChoices(
+        { name: 'auto', value: 'auto' },
+        { name: 'solo', value: 'solo' },
+        { name: 'team', value: 'team' },
+        { name: 'public', value: 'public' },
+        { name: 'status', value: 'status' },
+      )),
+  new SlashCommandBuilder()
+    .setName(slashName('timeout'))
+    .setDescription('设置当前频道 codex timeout（ms/off/status）')
+    .addStringOption(o => o.setName('value').setDescription('如 60000 / off / status').setRequired(true)),
   new SlashCommandBuilder()
     .setName(slashName('progress'))
     .setDescription('查看当前任务的最新执行进度'),
@@ -507,7 +545,7 @@ async function handleInteractionCreate(interaction) {
 
       case 'queue': {
         await interaction.reply({
-          content: formatQueueReport(key, interaction.channel),
+          content: formatQueueReport(key, session, interaction.channel),
           flags: 64,
         });
         break;
@@ -515,17 +553,108 @@ async function handleInteractionCreate(interaction) {
 
       case 'doctor': {
         await interaction.reply({
-          content: formatDoctorReport(key, interaction.channel),
+          content: formatDoctorReport(key, session, interaction.channel),
           flags: 64,
         });
         break;
       }
 
       case 'onboarding': {
+        const language = getSessionLanguage(session);
+        if (!isOnboardingEnabled(session)) {
+          await interaction.reply({
+            content: formatOnboardingDisabledMessage(language),
+            flags: 64,
+          });
+          break;
+        }
         const step = 1;
         await interaction.reply({
-          content: formatOnboardingStepReport(step, key, interaction.channel),
-          components: buildOnboardingActionRows(step, interaction.user.id),
+          content: formatOnboardingStepReport(step, key, session, interaction.channel, language),
+          components: buildOnboardingActionRows(step, interaction.user.id, session, language),
+          flags: 64,
+        });
+        break;
+      }
+
+      case 'onboarding_config': {
+        const action = String(interaction.options.getString('action') || '').trim().toLowerCase();
+        const language = getSessionLanguage(session);
+        if (action === 'on' || action === 'off') {
+          session.onboardingEnabled = action === 'on';
+          saveDb();
+          await interaction.reply({
+            content: formatOnboardingConfigReport(language, session.onboardingEnabled, true),
+            flags: 64,
+          });
+          break;
+        }
+        await interaction.reply({
+          content: formatOnboardingConfigReport(language, isOnboardingEnabled(session), false),
+          flags: 64,
+        });
+        break;
+      }
+
+      case 'language': {
+        const requested = interaction.options.getString('name');
+        const language = parseUiLanguageInput(requested) || DEFAULT_UI_LANGUAGE;
+        session.language = language;
+        saveDb();
+        await interaction.reply({
+          content: formatLanguageConfigReport(language, true),
+          flags: 64,
+        });
+        break;
+      }
+
+      case 'profile': {
+        const requested = interaction.options.getString('name');
+        if (String(requested || '').toLowerCase() === 'status') {
+          await interaction.reply({
+            content: formatProfileConfigReport(getSessionLanguage(session), getEffectiveSecurityProfile(session).profile, false),
+            flags: 64,
+          });
+          break;
+        }
+        const profile = parseSecurityProfileInput(requested);
+        if (!profile) {
+          await interaction.reply({
+            content: formatProfileConfigHelp(getSessionLanguage(session)),
+            flags: 64,
+          });
+          break;
+        }
+        session.securityProfile = profile;
+        saveDb();
+        await interaction.reply({
+          content: formatProfileConfigReport(getSessionLanguage(session), profile, true),
+          flags: 64,
+        });
+        break;
+      }
+
+      case 'timeout': {
+        const language = getSessionLanguage(session);
+        const parsedTimeout = parseTimeoutConfigAction(interaction.options.getString('value'));
+        if (!parsedTimeout || parsedTimeout.type === 'invalid') {
+          await interaction.reply({
+            content: formatTimeoutConfigHelp(language),
+            flags: 64,
+          });
+          break;
+        }
+        if (parsedTimeout.type === 'status') {
+          await interaction.reply({
+            content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), false),
+            flags: 64,
+          });
+          break;
+        }
+        session.timeoutMs = parsedTimeout.timeoutMs;
+        saveDb();
+        await interaction.reply({
+          content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true),
           flags: 64,
         });
         break;
@@ -533,7 +662,7 @@ async function handleInteractionCreate(interaction) {
 
       case 'progress': {
         await interaction.reply({
-          content: formatProgressReport(key, interaction.channel),
+          content: formatProgressReport(key, session, interaction.channel),
           flags: 64,
         });
         break;
@@ -1010,7 +1139,7 @@ function getChannelState(key) {
 
 async function enqueuePrompt(message, key, content, securityContext = null) {
   const state = getChannelState(key);
-  const security = securityContext || resolveSecurityContext(message.channel);
+  const security = securityContext || resolveSecurityContext(message.channel, getSession(key));
   const maxQueue = security.maxQueuePerChannel;
   if (maxQueue > 0 && state.queue.length >= maxQueue) {
     await safeReply(
@@ -1195,7 +1324,10 @@ function formatStatusReport(key, session, channel = null) {
   const defaults = getCodexDefaults();
   const codexHealth = getCodexCliHealth();
   const runtime = getRuntimeSnapshot(key);
-  const security = resolveSecurityContext(channel);
+  const security = resolveSecurityContext(channel, session);
+  const language = getSessionLanguage(session);
+  const timeoutSetting = resolveTimeoutSetting(session);
+  const securitySetting = getEffectiveSecurityProfile(session);
   const modeDesc = session.mode === 'dangerous'
     ? 'dangerous (无沙盒, 全权限)'
     : 'safe (沙盒隔离, 无网络)';
@@ -1229,10 +1361,13 @@ function formatStatusReport(key, session, channel = null) {
     runtime.messageId ? `• active message id: \`${runtime.messageId}\`` : null,
     runtime.progressMessageId ? `• progress message id: \`${runtime.progressMessageId}\`` : null,
     `• security profile: ${formatSecurityProfileDisplay(security)}`,
+    `• profile setting: ${formatSecurityProfileLabel(securitySetting.profile)} (${securitySetting.source})`,
     `• mention only: ${security.mentionOnly ? 'on' : 'off'}`,
+    `• ui language: ${formatLanguageLabel(language)}`,
+    `• onboarding: ${isOnboardingEnabled(session) ? 'on' : 'off'}`,
     `• !config: ${formatConfigCommandStatus()}`,
     `• config allowlist: ${describeConfigPolicy()}`,
-    `• codex timeout: ${formatTimeoutLabel(CODEX_TIMEOUT_MS)}`,
+    `• codex timeout: ${formatTimeoutLabel(timeoutSetting.timeoutMs)} (${timeoutSetting.source})`,
     `• compact strategy: ${describeCompactStrategy(COMPACT_STRATEGY)}`,
     `• compact trigger: ${COMPACT_ON_THRESHOLD ? 'on' : 'off'}`,
     `• compact threshold: ${MAX_INPUT_TOKENS_BEFORE_COMPACT}`,
@@ -1245,9 +1380,9 @@ function formatStatusReport(key, session, channel = null) {
   ].filter(Boolean).join('\n');
 }
 
-function formatQueueReport(key, channel = null) {
+function formatQueueReport(key, session = null, channel = null) {
   const runtime = getRuntimeSnapshot(key);
-  const security = resolveSecurityContext(channel);
+  const security = resolveSecurityContext(channel, session);
   const planSummary = formatProgressPlanSummary(runtime.progressPlan);
   const completedSummary = formatCompletedStepsSummary(runtime.completedSteps, {
     planState: runtime.progressPlan,
@@ -2322,6 +2457,7 @@ async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, 
 
   const notes = [];
   const args = buildCodexArgs({ session, workspaceDir, prompt });
+  const timeoutMs = resolveTimeoutSetting(session).timeoutMs;
 
   if (DEBUG_EVENTS) {
     console.log('Running codex:', [CODEX_BIN, ...args].join(' '));
@@ -2339,7 +2475,13 @@ async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, 
     error,
     timedOut,
     cancelled,
-  } = await spawnCodex(args, workspaceDir, { onSpawn, wasCancelled, onEvent, onLog });
+  } = await spawnCodex(args, workspaceDir, {
+    onSpawn,
+    wasCancelled,
+    onEvent,
+    onLog,
+    timeoutMs,
+  });
 
   return {
     ok,
@@ -2400,12 +2542,13 @@ function spawnCodex(args, cwd, options = {}) {
     let threadId = null;
     let resolved = false;
     let timedOut = false;
-    const timeout = CODEX_TIMEOUT_MS > 0
+    const timeoutMs = normalizeTimeoutMs(options.timeoutMs, CODEX_TIMEOUT_MS);
+    const timeout = timeoutMs > 0
       ? setTimeout(() => {
         timedOut = true;
-        logs.push(`Timeout after ${CODEX_TIMEOUT_MS}ms`);
+        logs.push(`Timeout after ${timeoutMs}ms`);
         stopChildProcess(child);
-      }, CODEX_TIMEOUT_MS)
+      }, timeoutMs)
       : null;
 
     const consumeLine = (line, source) => {
@@ -2505,7 +2648,7 @@ function spawnCodex(args, cwd, options = {}) {
       const error = ok
         ? null
         : timedOut
-          ? `timeout after ${CODEX_TIMEOUT_MS}ms`
+          ? `timeout after ${timeoutMs}ms`
           : cancelled
             ? `cancelled (${signal || `exit=${exitCode}`})`
             : `exit=${exitCode}${signal ? ` signal=${signal}` : ''}`;
@@ -2567,6 +2710,10 @@ function getSession(key) {
       model: null,
       effort: null,
       mode: DEFAULT_MODE,
+      language: DEFAULT_UI_LANGUAGE,
+      onboardingEnabled: ONBOARDING_ENABLED_BY_DEFAULT,
+      securityProfile: null,
+      timeoutMs: null,
       configOverrides: [],
       updatedAt: new Date().toISOString(),
     };
@@ -2574,11 +2721,56 @@ function getSession(key) {
   }
   const s = db.threads[key];
   // migrate old sessions
-  if (s.effort === undefined) s.effort = null;
-  if (s.configOverrides === undefined) s.configOverrides = [];
-  if (s.name === undefined) s.name = null;
-  if (s.lastInputTokens === undefined) s.lastInputTokens = null;
+  let migrated = false;
+  if (s.effort === undefined) {
+    s.effort = null;
+    migrated = true;
+  }
+  if (s.configOverrides === undefined) {
+    s.configOverrides = [];
+    migrated = true;
+  }
+  if (s.name === undefined) {
+    s.name = null;
+    migrated = true;
+  }
+  if (s.lastInputTokens === undefined) {
+    s.lastInputTokens = null;
+    migrated = true;
+  }
+  if (s.language === undefined) {
+    s.language = DEFAULT_UI_LANGUAGE;
+    migrated = true;
+  }
+  if (s.onboardingEnabled === undefined) {
+    s.onboardingEnabled = ONBOARDING_ENABLED_BY_DEFAULT;
+    migrated = true;
+  }
+  if (s.securityProfile === undefined) {
+    s.securityProfile = null;
+    migrated = true;
+  }
+  if (s.timeoutMs === undefined) {
+    s.timeoutMs = null;
+    migrated = true;
+  }
+  const normalizedLanguage = normalizeUiLanguage(s.language);
+  if (s.language !== normalizedLanguage) {
+    s.language = normalizedLanguage;
+    migrated = true;
+  }
+  const normalizedSecurityProfile = normalizeSessionSecurityProfile(s.securityProfile);
+  if (s.securityProfile !== normalizedSecurityProfile) {
+    s.securityProfile = normalizedSecurityProfile;
+    migrated = true;
+  }
+  const normalizedTimeoutMs = normalizeSessionTimeoutMs(s.timeoutMs);
+  if (s.timeoutMs !== normalizedTimeoutMs) {
+    s.timeoutMs = normalizedTimeoutMs;
+    migrated = true;
+  }
   s.updatedAt = new Date().toISOString();
+  if (migrated) saveDb();
   return s;
 }
 
@@ -2793,11 +2985,13 @@ function doesMessageTargetBot(message, botUserId) {
   return mentioned || repliedToBot;
 }
 
-function resolveSecurityContext(channel) {
-  const resolved = resolveSecurityProfileForChannel(channel);
+function resolveSecurityContext(channel, session = null) {
+  const configured = getEffectiveSecurityProfile(session);
+  const resolved = resolveSecurityProfileForChannel(channel, configured.profile, configured.source);
   const defaults = SECURITY_PROFILE_DEFAULTS[resolved.profile] || SECURITY_PROFILE_DEFAULTS.team;
   return {
-    configuredProfile: SECURITY_PROFILE,
+    configuredProfile: configured.profile,
+    configuredSource: configured.source,
     profile: resolved.profile,
     source: resolved.source,
     reason: resolved.reason,
@@ -2806,12 +3000,12 @@ function resolveSecurityContext(channel) {
   };
 }
 
-function resolveSecurityProfileForChannel(channel) {
-  if (SECURITY_PROFILE !== 'auto') {
+function resolveSecurityProfileForChannel(channel, configuredProfile = SECURITY_PROFILE, configuredSource = 'env default') {
+  if (configuredProfile !== 'auto') {
     return {
-      profile: SECURITY_PROFILE,
-      source: 'manual',
-      reason: `SECURITY_PROFILE=${SECURITY_PROFILE}`,
+      profile: configuredProfile,
+      source: configuredSource === 'session override' ? 'session' : 'manual',
+      reason: `${configuredSource}: ${configuredProfile}`,
     };
   }
   if (!channel) {
@@ -2848,6 +3042,9 @@ function resolveGuildChannelVisibility(channel) {
 
 function formatSecurityProfileDisplay(security) {
   if (!security) return '(unknown)';
+  if (security.source === 'session') {
+    return `${security.profile} (session override)`;
+  }
   if (security.source === 'manual') {
     return `${security.profile} (manual)`;
   }
