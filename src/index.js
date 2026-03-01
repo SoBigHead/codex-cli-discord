@@ -917,37 +917,10 @@ async function handleCommand(message, key, content) {
   const [cmd, ...rest] = content.split(/\s+/);
   const arg = rest.join(' ').trim();
   const session = getSession(key);
-  const security = resolveSecurityContext(message.channel);
 
   switch (cmd.toLowerCase()) {
     case '!help': {
-      await safeReply(message, [
-        '**📋 命令列表**',
-        '',
-        '**会话管理**',
-        '• `!status` — 当前配置一览',
-        '• `!queue` — 查看当前频道队列（运行中/排队数）',
-        '• `!doctor` — 查看 bot 健康状态与当前安全策略',
-        `• \`${slashRef('onboarding')}\` — 交互式引导（按钮分步）`,
-        '• `!onboarding` — 文本版引导流程与检查清单',
-        '• `!progress` — 查看当前任务的最新进度',
-        '• `!abort` / `!cancel` / `!stop` — 中断当前任务并清空队列',
-        '• `!reset` — 清空会话，下条消息新开上下文',
-        '• `!resume <session_id>` — 继承一个已有的 Codex session',
-        '• `!sessions` — 列出最近的 Codex sessions（从 ~/.codex/sessions/）',
-        '',
-        '**工作目录**',
-        '• `!setdir <path>` — 设置工作目录（会清空旧会话）',
-        '• `!cd <path>` — 同 !setdir 的别名',
-        '',
-        '**模型 & 执行**',
-        '• `!model <name|default>` — 切换模型（如 gpt-5.3-codex, o3）',
-        '• `!effort <high|medium|low|default>` — reasoning effort',
-        '• `!mode <safe|dangerous>` — 执行模式',
-        '• `!config <key=value>` — 添加 codex -c 配置（需 ENABLE_CONFIG_CMD=true 且 key 在白名单）',
-        '',
-        '普通消息直接转给 Codex。',
-      ].join('\n'));
+      await safeReply(message, formatHelpReport(session));
       break;
     }
 
@@ -957,24 +930,93 @@ async function handleCommand(message, key, content) {
     }
 
     case '!queue': {
-      await safeReply(message, formatQueueReport(key, message.channel));
+      await safeReply(message, formatQueueReport(key, session, message.channel));
       break;
     }
 
     case '!doctor': {
-      await safeReply(message, formatDoctorReport(key, message.channel));
+      await safeReply(message, formatDoctorReport(key, session, message.channel));
       break;
     }
 
     case '!onboarding':
     case '!onboard':
     case '!guide': {
-      await safeReply(message, formatOnboardingReport(key, message.channel));
+      const language = getSessionLanguage(session);
+      const onboardingOp = parseOnboardingConfigAction(arg);
+      if (cmd.toLowerCase() === '!onboarding' && onboardingOp) {
+        if (onboardingOp.type === 'invalid') {
+          await safeReply(message, formatOnboardingConfigHelp(language));
+          break;
+        }
+        if (onboardingOp.type === 'status') {
+          await safeReply(message, formatOnboardingConfigReport(language, isOnboardingEnabled(session), false));
+          break;
+        }
+        if (onboardingOp.type === 'set') {
+          session.onboardingEnabled = onboardingOp.enabled;
+          saveDb();
+          await safeReply(message, formatOnboardingConfigReport(language, session.onboardingEnabled, true));
+          break;
+        }
+      }
+      if (!isOnboardingEnabled(session)) {
+        await safeReply(message, formatOnboardingDisabledMessage(language));
+        break;
+      }
+      await safeReply(message, formatOnboardingReport(key, session, message.channel, language));
+      break;
+    }
+
+    case '!lang':
+    case '!language': {
+      const requested = parseUiLanguageInput(arg);
+      if (!requested) {
+        await safeReply(message, formatLanguageConfigHelp(getSessionLanguage(session)));
+        break;
+      }
+      session.language = requested;
+      saveDb();
+      await safeReply(message, formatLanguageConfigReport(requested, true));
+      break;
+    }
+
+    case '!profile': {
+      const language = getSessionLanguage(session);
+      if (!arg || ['status', 'state', 'show', '查看', '状态'].includes(arg.toLowerCase())) {
+        await safeReply(message, formatProfileConfigReport(language, getEffectiveSecurityProfile(session).profile, false));
+        break;
+      }
+      const profile = parseSecurityProfileInput(arg);
+      if (!profile) {
+        await safeReply(message, formatProfileConfigHelp(language));
+        break;
+      }
+      session.securityProfile = profile;
+      saveDb();
+      await safeReply(message, formatProfileConfigReport(language, profile, true));
+      break;
+    }
+
+    case '!timeout': {
+      const language = getSessionLanguage(session);
+      const parsedTimeout = parseTimeoutConfigAction(arg || 'status');
+      if (!parsedTimeout || parsedTimeout.type === 'invalid') {
+        await safeReply(message, formatTimeoutConfigHelp(language));
+        break;
+      }
+      if (parsedTimeout.type === 'status') {
+        await safeReply(message, formatTimeoutConfigReport(language, resolveTimeoutSetting(session), false));
+        break;
+      }
+      session.timeoutMs = parsedTimeout.timeoutMs;
+      saveDb();
+      await safeReply(message, formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true));
       break;
     }
 
     case '!progress': {
-      await safeReply(message, formatProgressReport(key, message.channel));
+      await safeReply(message, formatProgressReport(key, session, message.channel));
       break;
     }
 
@@ -1788,17 +1830,59 @@ function getOnboardingSnapshot(key, session = null, channel = null, language = D
   };
 }
 
-function formatOnboardingReport(key, channel = null) {
-  const snapshot = getOnboardingSnapshot(key, channel);
+function formatOnboardingReport(key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
+  const lang = normalizeUiLanguage(language);
+  const snapshot = getOnboardingSnapshot(key, session, channel, lang);
+  if (lang === 'en') {
+    return [
+      '🧭 **Onboarding (Text)**',
+      `• For interactive steps, use \`${slashRef('onboarding')}\` (buttons + direct config on each step)`,
+      '',
+      '**1) Preflight check**',
+      `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
+      `• OPENAI_API_KEY: ${snapshot.hasApiKey ? '✅ loaded' : '⚠️ missing/unused (depends on your provider)'}`,
+      `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
+      `• codex-cli: ${formatCodexHealth(snapshot.codexHealth)}`,
+      `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
+      `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)} (${snapshot.profileSetting.source})`,
+      `• timeout setting: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)} (${snapshot.timeoutSetting.source})`,
+      '',
+      '**2) Access scope & security policy (effective now)**',
+      `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
+      `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
+      `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
+      `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'} (${snapshot.mentionHint})`,
+      `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
+      `• queued prompts now: ${snapshot.runtime.queued}`,
+      `• !config: ${formatConfigCommandStatus()}`,
+      '',
+      '**3) First run flow**',
+      `1. \`${slashRef('doctor')}\` or \`!doctor\` to verify health checks.`,
+      `2. \`${slashRef('status')}\` or \`!status\` to verify mode/model/workspace.`,
+      `3. \`${slashRef('setdir')} <path>\` or \`!setdir <path>\` to bind target project.`,
+      `4. Send your first task: ${snapshot.firstPromptHint}`,
+      `5. If backlog appears, check \`${slashRef('queue')}\` / \`!queue\`; use \`${slashRef('cancel')}\` / \`!abort\` when needed.`,
+      '',
+      '**4) Recommended defaults**',
+      '• Start with 1 channel + 1 admin account, then gradually open access.',
+      '• Keep `ENABLE_CONFIG_CMD=false`; if enabled, allowlist only required keys.',
+      '• Keep `safe` as default; switch to `dangerous` only in trusted environments.',
+      '',
+      `Quick re-check: \`${slashRef('doctor')}\``,
+    ].join('\n');
+  }
   return [
     '🧭 **Onboarding（文本版）**',
-    `• 交互分步版请使用 \`${slashRef('onboarding')}\`（按钮：上一步/下一步/完成）`,
+    `• 交互分步版请使用 \`${slashRef('onboarding')}\`（每步可直接配置 + 上一步/下一步/完成）`,
     '',
     '**1) 安装自检（先看当前是否可跑）**',
     `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
     `• OPENAI_API_KEY: ${snapshot.hasApiKey ? '✅ loaded' : '⚠️ missing/unused (按 provider 需要配置)'}`,
     `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
     `• codex-cli: ${formatCodexHealth(snapshot.codexHealth)}`,
+    `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
+    `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)}（${snapshot.profileSetting.source}）`,
+    `• timeout setting: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}（${snapshot.timeoutSetting.source}）`,
     '',
     '**2) 访问范围与安全策略（当前生效）**',
     `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
@@ -1831,11 +1915,14 @@ function normalizeOnboardingStep(value) {
   return Math.max(1, Math.min(ONBOARDING_TOTAL_STEPS, Math.floor(n)));
 }
 
-function buildOnboardingButtonId(action, step, userId) {
+function buildOnboardingButtonId(action, step, userId, value = '') {
   const safeAction = String(action || '').trim().toLowerCase();
   const safeStep = normalizeOnboardingStep(step);
   const safeUserId = String(userId || '').trim();
-  return `onb:${safeAction}:${safeStep}:${safeUserId}`;
+  const safeValue = String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
+  return safeValue
+    ? `onb:${safeAction}:${safeStep}:${safeUserId}:${safeValue}`
+    : `onb:${safeAction}:${safeStep}:${safeUserId}`;
 }
 
 function isOnboardingButtonId(customId) {
@@ -1844,56 +1931,164 @@ function isOnboardingButtonId(customId) {
 
 function parseOnboardingButtonId(customId) {
   const text = String(customId || '').trim();
-  const match = text.match(/^onb:(goto|refresh|done):([0-9]+):([0-9]{5,32})$/);
-  if (!match) return null;
+  const parts = text.split(':');
+  if (parts.length < 4 || parts[0] !== 'onb') return null;
+  const [, action, rawStep, userId, ...rest] = parts;
+  if (!['goto', 'refresh', 'done', 'set_lang', 'set_profile', 'set_timeout'].includes(action)) return null;
+  if (!/^[0-9]{5,32}$/.test(String(userId || ''))) return null;
   return {
-    action: match[1],
-    step: normalizeOnboardingStep(match[2]),
-    userId: match[3],
+    action,
+    step: normalizeOnboardingStep(rawStep),
+    userId,
+    value: String(rest.join(':') || '').trim().toLowerCase(),
   };
 }
 
-function buildOnboardingActionRows(step, userId) {
+function buildOnboardingConfigRow(step, userId, session = null, language = DEFAULT_UI_LANGUAGE) {
+  const lang = normalizeUiLanguage(language);
+  const current = normalizeOnboardingStep(step);
+  if (current === 1) {
+    const activeLanguage = getSessionLanguage(session);
+    return new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(buildOnboardingButtonId('set_lang', current, userId, 'zh'))
+        .setLabel('中文')
+        .setStyle(activeLanguage === 'zh' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(buildOnboardingButtonId('set_lang', current, userId, 'en'))
+        .setLabel('English')
+        .setStyle(activeLanguage === 'en' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    );
+  }
+
+  if (current === 2) {
+    const activeProfile = getEffectiveSecurityProfile(session).profile;
+    const options = ['auto', 'solo', 'team', 'public'];
+    return new ActionRowBuilder().addComponents(
+      ...options.map((profile) => new ButtonBuilder()
+        .setCustomId(buildOnboardingButtonId('set_profile', current, userId, profile))
+        .setLabel(profile)
+        .setStyle(activeProfile === profile ? ButtonStyle.Primary : ButtonStyle.Secondary)),
+    );
+  }
+
+  if (current === 3) {
+    const activeTimeoutMs = resolveTimeoutSetting(session).timeoutMs;
+    const presets = [
+      { value: 0, label: lang === 'en' ? 'off' : '关闭' },
+      { value: 30000, label: '30s' },
+      { value: 60000, label: '60s' },
+      { value: 120000, label: '120s' },
+    ];
+    return new ActionRowBuilder().addComponents(
+      ...presets.map((preset) => new ButtonBuilder()
+        .setCustomId(buildOnboardingButtonId('set_timeout', current, userId, String(preset.value)))
+        .setLabel(preset.label)
+        .setStyle(activeTimeoutMs === preset.value ? ButtonStyle.Primary : ButtonStyle.Secondary)),
+    );
+  }
+
+  return null;
+}
+
+function buildOnboardingActionRows(step, userId, session = null, language = DEFAULT_UI_LANGUAGE) {
+  const lang = normalizeUiLanguage(language);
   const current = normalizeOnboardingStep(step);
   const previous = normalizeOnboardingStep(current - 1);
   const next = normalizeOnboardingStep(current + 1);
-  return [
+  const rows = [
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(buildOnboardingButtonId('goto', previous, userId))
-        .setLabel('上一步')
+        .setLabel(lang === 'en' ? 'Previous' : '上一步')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(current <= 1),
       new ButtonBuilder()
         .setCustomId(buildOnboardingButtonId('refresh', current, userId))
-        .setLabel('刷新')
+        .setLabel(lang === 'en' ? 'Refresh' : '刷新')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(buildOnboardingButtonId('goto', next, userId))
-        .setLabel('下一步')
+        .setLabel(lang === 'en' ? 'Next' : '下一步')
         .setStyle(ButtonStyle.Primary)
         .setDisabled(current >= ONBOARDING_TOTAL_STEPS),
       new ButtonBuilder()
         .setCustomId(buildOnboardingButtonId('done', current, userId))
-        .setLabel('完成')
+        .setLabel(lang === 'en' ? 'Done' : '完成')
         .setStyle(ButtonStyle.Success),
     ),
   ];
+  const configRow = buildOnboardingConfigRow(current, userId, session, lang);
+  if (configRow) rows.push(configRow);
+  return rows;
 }
 
-function formatOnboardingStepReport(step, key, channel = null) {
+function formatOnboardingStepReport(step, key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
+  const lang = normalizeUiLanguage(language);
   const current = normalizeOnboardingStep(step);
-  const snapshot = getOnboardingSnapshot(key, channel);
+  const snapshot = getOnboardingSnapshot(key, session, channel, lang);
+  if (lang === 'en') {
+    switch (current) {
+      case 1:
+        return [
+          '🧭 **Onboarding 1/4: Preflight + Language**',
+          `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
+          `• OPENAI_API_KEY: ${snapshot.hasApiKey ? '✅ loaded' : '⚠️ missing/unused (depends on your provider)'}`,
+          `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
+          `• codex-cli: ${formatCodexHealth(snapshot.codexHealth)}`,
+          `• ui language (current): ${formatLanguageLabel(snapshot.currentLanguage)}`,
+          '',
+          'Choose language with buttons, then click "Next".',
+        ].join('\n');
+      case 2:
+        return [
+          '🧭 **Onboarding 2/4: Scope & Security Profile**',
+          `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
+          `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
+          `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
+          `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)} (${snapshot.profileSetting.source})`,
+          `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'} (${snapshot.mentionHint})`,
+          `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
+          `• queued prompts now: ${snapshot.runtime.queued}`,
+          '',
+          'Choose `auto/solo/team/public` with buttons, then click "Next".',
+        ].join('\n');
+      case 3:
+        return [
+          '🧭 **Onboarding 3/4: Timeout**',
+          `• codex timeout (current): ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)} (${snapshot.timeoutSetting.source})`,
+          `• quick presets: off / 30s / 60s / 120s`,
+          `• custom value: \`${slashRef('timeout')} <ms|off|status>\` or \`!timeout <ms|off|status>\``,
+          '',
+          'Choose a timeout preset with buttons, then click "Next".',
+        ].join('\n');
+      case 4:
+      default:
+        return [
+          '🧭 **Onboarding 4/4: First Run Checklist**',
+          `1. \`${slashRef('doctor')}\` or \`!doctor\` to verify health checks.`,
+          `2. \`${slashRef('status')}\` or \`!status\` to verify mode/model/workspace/profile/timeout.`,
+          `3. \`${slashRef('setdir')} <path>\` or \`!setdir <path>\` to bind project path.`,
+          `4. Send the first task: ${snapshot.firstPromptHint}`,
+          `5. Use \`${slashRef('queue')}\` / \`!queue\` for backlog, \`${slashRef('cancel')}\` / \`!abort\` to stop.`,
+          '',
+          `Current settings: language=${formatLanguageLabel(snapshot.currentLanguage)}, profile=${formatSecurityProfileLabel(snapshot.profileSetting.profile)}, timeout=${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}`,
+          '',
+          'Click "Done" when finished.',
+        ].join('\n');
+    }
+  }
   switch (current) {
     case 1:
       return [
-        '🧭 **Onboarding 1/4：安装自检**',
+        '🧭 **Onboarding 1/4：安装自检 + 语言设置**',
         `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
         `• OPENAI_API_KEY: ${snapshot.hasApiKey ? '✅ loaded' : '⚠️ missing/unused (按 provider 需要配置)'}`,
         `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
         `• codex-cli: ${formatCodexHealth(snapshot.codexHealth)}`,
+        `• ui language（当前）：${formatLanguageLabel(snapshot.currentLanguage)}`,
         '',
-        `下一步建议：点击「下一步」检查当前频道生效的安全策略。`,
+        '请用按钮选择语言，然后点「下一步」。',
       ].join('\n');
     case 2:
       return [
