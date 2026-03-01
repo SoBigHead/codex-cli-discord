@@ -86,6 +86,9 @@ Git hooks 说明：
 - `PROGRESS_EVENT_FLUSH_MS`：事件触发进度编辑的最小间隔
 - `PROGRESS_TEXT_PREVIEW_CHARS`："最新步骤" 预览截断长度
 - `PROGRESS_INCLUDE_STDERR`：进度预览中是否包含原始 stderr（噪声较大，默认 `false`）
+- `PROGRESS_PLAN_MAX_LINES`：进度中展示的 plan 条目上限（默认 `4`）
+- `PROGRESS_DONE_STEPS_MAX`：进度中展示的“已完成关键步骤”上限（默认 `4`）
+- `PROGRESS_MESSAGE_MAX_CHARS`：每次进度消息渲染的总字符上限（默认 `1800`）
 - `SELF_HEAL_ENABLED`：是否启用运行时自愈（默认 `true`）
 - `SELF_HEAL_RESTART_DELAY_MS`：自愈重启前延迟（默认 `5000`）
 - `SELF_HEAL_MAX_LOGIN_BACKOFF_MS`：Discord 登录重试最大退避（默认 `60000`）

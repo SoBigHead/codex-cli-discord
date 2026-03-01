@@ -88,6 +88,9 @@ Important knobs:
 - `PROGRESS_EVENT_FLUSH_MS`: min interval for event-triggered progress edits
 - `PROGRESS_TEXT_PREVIEW_CHARS`: truncation length for “latest step” preview
 - `PROGRESS_INCLUDE_STDERR`: include raw stderr lines in progress preview (noisy; default `false`)
+- `PROGRESS_PLAN_MAX_LINES`: max plan lines shown in progress (default `4`)
+- `PROGRESS_DONE_STEPS_MAX`: max completed key steps shown in progress (default `4`)
+- `PROGRESS_MESSAGE_MAX_CHARS`: max rendered chars per progress message (default `1800`)
 - `SELF_HEAL_ENABLED`: enable runtime self-healing (default `true`)
 - `SELF_HEAL_RESTART_DELAY_MS`: delay before self-heal restart (default `5000`)
 - `SELF_HEAL_MAX_LOGIN_BACKOFF_MS`: max retry backoff for Discord login (default `60000`)
