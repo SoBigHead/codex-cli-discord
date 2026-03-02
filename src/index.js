@@ -121,7 +121,7 @@ const PROGRESS_INCLUDE_STDERR = String(process.env.PROGRESS_INCLUDE_STDERR || 'f
 const PROGRESS_PLAN_MAX_LINES = Math.min(8, Math.max(1, toInt(process.env.PROGRESS_PLAN_MAX_LINES, 4)));
 const PROGRESS_DONE_STEPS_MAX = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_DONE_STEPS_MAX, 4)));
 const PROGRESS_ACTIVITY_MAX_LINES = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_ACTIVITY_MAX_LINES, 4)));
-const PROGRESS_PROCESS_LINES = Math.min(5, Math.max(2, toInt(process.env.PROGRESS_PROCESS_LINES, 3)));
+const PROGRESS_PROCESS_LINES = 2;
 const PROGRESS_PROCESS_PUSH_INTERVAL_MS = normalizeIntervalMs(
   process.env.PROGRESS_PROCESS_PUSH_INTERVAL_MS,
   1100,
