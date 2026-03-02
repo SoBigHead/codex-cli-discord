@@ -407,6 +407,17 @@ function pickFirstRawTextFromContent(content) {
   return '';
 }
 
+function isLowSignalProcessText(text) {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) return true;
+  const lower = normalized.toLowerCase();
+  if (lower === '...') return true;
+  if (/^asking\b/.test(lower)) return true;
+  if (/^reasoning\b/.test(lower)) return true;
+  if (/^thinking\b/.test(lower)) return true;
+  return false;
+}
+
 export function extractRawProgressTextFromEvent(ev) {
   if (!ev || typeof ev !== 'object') return '';
   const type = normalizeEventType(ev.type || '');
@@ -414,55 +425,34 @@ export function extractRawProgressTextFromEvent(ev) {
   const item = ev.item && typeof ev.item === 'object' ? ev.item : null;
 
   if (type.endsWith('_delta')) {
+    if (type.includes('reasoning')) return '';
+    if (!(type.includes('output_text') || type.includes('message') || type.includes('content_part'))) return '';
     const text = pickFirstRawText([
       ev.delta,
       ev.text_delta,
       ev.output_text_delta,
-      ev.reasoning_delta,
       payload?.delta,
       payload?.text_delta,
       payload?.output_text_delta,
-      payload?.reasoning_delta,
       payload?.text,
     ]) || pickFirstRawTextFromContent(payload?.content);
-    return text || '';
+    if (!text || isLowSignalProcessText(text)) return '';
+    return text;
   }
 
   if (type === 'item_completed' || type === 'item_started') {
     const itemType = normalizeEventType(item?.type || '');
-    if (itemType === 'agent_message') {
-      const text = pickFirstRawText([item?.text]) || pickFirstRawTextFromContent(item?.content);
-      if (text) return text;
-      return '';
-    }
-    if (itemType === 'reasoning') {
-      const text = pickFirstRawText([item?.text]) || pickFirstRawTextFromContent(item?.content);
-      if (text) return text;
-    }
-    if (itemType === 'message') {
-      const text = pickFirstRawTextFromContent(item?.content);
-      if (text) return text;
-    }
+    if (itemType === 'agent_message') return '';
+    if (itemType === 'reasoning') return '';
+    if (itemType === 'message') return '';
     return '';
   }
 
   if (type === 'response_item' && payload && typeof payload === 'object') {
     const payloadType = normalizeEventType(payload.type || '');
-    if (payloadType === 'reasoning') {
-      const text = pickFirstRawText([payload.text]) || pickFirstRawTextFromContent(payload.content);
-      if (text) return text;
-      return '';
-    }
-    if (payloadType === 'message') {
-      const text = pickFirstRawTextFromContent(payload.content);
-      if (text) return text;
-      return '';
-    }
-    if (payloadType === 'agent_message') {
-      const text = pickFirstRawText([payload.text]) || pickFirstRawTextFromContent(payload.content);
-      if (text) return text;
-      return '';
-    }
+    if (payloadType === 'reasoning') return '';
+    if (payloadType === 'message') return '';
+    if (payloadType === 'agent_message') return '';
   }
 
   return '';

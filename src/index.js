@@ -1436,13 +1436,17 @@ function localizeProgressLines(lines, language = 'en') {
 
 function renderProcessContentLines(activities, language = 'en') {
   const count = PROGRESS_PROCESS_LINES;
-  const visible = Array.isArray(activities) ? activities.slice(-count) : [];
-  const placeholders = Array.from({ length: Math.max(0, count - visible.length) }, () => '…');
-  const rows = [...placeholders, ...visible];
+  const visible = Array.isArray(activities)
+    ? activities
+      .slice(-count)
+      .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+    : [];
+  if (!visible.length) return [];
   const title = language === 'en' ? '• process content:' : '• 过程内容：';
   return [
     title,
-    ...rows.map((line) => `  · ${String(line || '…')}`),
+    ...visible.map((line) => `  · ${line}`),
   ];
 }
 
@@ -2516,7 +2520,6 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       ? source
       : (source === 'stderr' ? '标准错误' : '标准输出');
     latestStep = `${sourceLabel}: ${truncate(String(line || '').replace(/\s+/g, ' ').trim(), PROGRESS_TEXT_PREVIEW_CHARS)}`;
-    appendRecentActivity(recentActivities, latestStep);
     syncActiveRun();
     void emit(false);
   };
