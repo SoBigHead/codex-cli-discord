@@ -175,6 +175,49 @@ test('extractRawProgressTextFromEvent filters low-signal english planning text',
   assert.equal(raw, '');
 });
 
+test('extractRawProgressTextFromEvent reads commentary from event_msg agent_message', () => {
+  const ev = {
+    type: 'event_msg',
+    payload: {
+      type: 'agent_message',
+      phase: 'commentary',
+      message: '正在检查日志并定位过程内容过滤条件。',
+    },
+  };
+
+  const raw = extractRawProgressTextFromEvent(ev);
+  assert.equal(raw, '正在检查日志并定位过程内容过滤条件。');
+});
+
+test('extractRawProgressTextFromEvent ignores final_answer from event_msg agent_message', () => {
+  const ev = {
+    type: 'event_msg',
+    payload: {
+      type: 'agent_message',
+      phase: 'final_answer',
+      message: '这是最终回答，不应重复进入过程内容。',
+    },
+  };
+
+  const raw = extractRawProgressTextFromEvent(ev);
+  assert.equal(raw, '');
+});
+
+test('summarizeCodexEvent unwraps event_msg payload for summary rendering', () => {
+  const ev = {
+    type: 'event_msg',
+    payload: {
+      type: 'turn.completed',
+      usage: {
+        input_tokens: 123,
+      },
+    },
+  };
+
+  const summary = summarizeCodexEvent(ev, { previewChars: 180 });
+  assert.equal(summary, 'turn completed (input tokens: 123)');
+});
+
 test('appendRecentActivity can keep full raw text without truncation', () => {
   const list = [];
   const rawText = '这是一段用于验证不截断行为的原始过程文本 '.repeat(12).trim();

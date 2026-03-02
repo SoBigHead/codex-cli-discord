@@ -282,6 +282,16 @@ export function summarizeCodexEvent(ev, options = {}) {
   const type = normalizeEventType(rawType);
   const payload = extractEventPayload(ev);
 
+  if (type === 'event_msg' && payload && typeof payload === 'object') {
+    const nestedType = normalizeWhitespace(payload.type || '');
+    if (nestedType && nestedType.toLowerCase() !== 'event_msg') {
+      return summarizeCodexEvent({
+        ...payload,
+        type: nestedType,
+      }, options);
+    }
+  }
+
   if (type === 'response_item' && payload) {
     const summary = summarizeResponseItem(payload, opts);
     if (summary) return summary;
@@ -423,6 +433,28 @@ export function extractRawProgressTextFromEvent(ev) {
   const type = normalizeEventType(ev.type || '');
   const payload = extractEventPayload(ev);
   const item = ev.item && typeof ev.item === 'object' ? ev.item : null;
+
+  if (type === 'event_msg' && payload && typeof payload === 'object') {
+    const nestedType = normalizeEventType(payload.type || '');
+    if (nestedType === 'agent_message') {
+      const phase = normalizeEventType(payload.phase || '');
+      if (phase === 'final_answer') return '';
+      const text = pickFirstRawText([
+        payload.message,
+        payload.text,
+        payload.payload?.text,
+      ]);
+      if (!text || isLowSignalProcessText(text)) return '';
+      return text;
+    }
+    if (nestedType === 'agent_reasoning' || nestedType === 'reasoning') return '';
+    if (nestedType) {
+      return extractRawProgressTextFromEvent({
+        ...payload,
+        type: payload.type,
+      });
+    }
+  }
 
   if (type.endsWith('_delta')) {
     if (type.includes('reasoning')) return '';
