@@ -121,6 +121,7 @@ const PROGRESS_INCLUDE_STDERR = String(process.env.PROGRESS_INCLUDE_STDERR || 'f
 const PROGRESS_PLAN_MAX_LINES = Math.min(8, Math.max(1, toInt(process.env.PROGRESS_PLAN_MAX_LINES, 4)));
 const PROGRESS_DONE_STEPS_MAX = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_DONE_STEPS_MAX, 4)));
 const PROGRESS_ACTIVITY_MAX_LINES = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_ACTIVITY_MAX_LINES, 4)));
+const PROGRESS_PROCESS_LINES = 5;
 const PROGRESS_MESSAGE_MAX_CHARS = Math.max(600, toInt(process.env.PROGRESS_MESSAGE_MAX_CHARS, 1800));
 const SELF_HEAL_ENABLED = String(process.env.SELF_HEAL_ENABLED || 'true').toLowerCase() !== 'false';
 const SELF_HEAL_RESTART_DELAY_MS = toInt(process.env.SELF_HEAL_RESTART_DELAY_MS, 5000);
@@ -1433,6 +1434,18 @@ function localizeProgressLines(lines, language = 'en') {
   return lines.map((line) => localizeProgressLine(line, language));
 }
 
+function renderProcessContentLines(activities, language = 'en') {
+  const count = PROGRESS_PROCESS_LINES;
+  const visible = Array.isArray(activities) ? activities.slice(-count) : [];
+  const placeholders = Array.from({ length: Math.max(0, count - visible.length) }, () => '…');
+  const rows = [...placeholders, ...visible];
+  const title = language === 'en' ? '• process content:' : '• 过程内容：';
+  return [
+    title,
+    ...rows.map((line) => `  · ${String(line || '…')}`),
+  ];
+}
+
 function formatRuntimeLabel(runtime, language = 'en') {
   if (!runtime.running) return language === 'en' ? 'idle' : '空闲';
   const age = runtime.activeSinceMs === null ? (language === 'en' ? 'just-now' : '刚刚') : humanAge(runtime.activeSinceMs);
@@ -1472,6 +1485,7 @@ function formatStatusReport(key, session, channel = null) {
     latestStep: runtime.progressText,
     maxSteps: 3,
   });
+  const processLines = renderProcessContentLines(runtime.recentActivities, normalizeUiLanguage(language));
 
   return [
     '🧭 **当前配置**',
@@ -1489,7 +1503,7 @@ function formatStatusReport(key, session, channel = null) {
     `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
     `• progress events: ${runtime.progressEvents}`,
     runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
-    ...renderRecentActivitiesLines(runtime.recentActivities, Math.min(PROGRESS_ACTIVITY_MAX_LINES, 4)),
+    ...processLines,
     planSummary ? `• plan: ${planSummary}` : null,
     completedSummary ? `• completed milestones: ${completedSummary}` : null,
     runtime.progressAgoMs !== null ? `• progress updated: ${humanAge(runtime.progressAgoMs)} ago` : null,
@@ -1524,13 +1538,14 @@ function formatQueueReport(key, session = null, channel = null) {
     latestStep: runtime.progressText,
     maxSteps: 3,
   });
+  const processLines = renderProcessContentLines(runtime.recentActivities, 'en');
   return [
     '📮 **任务队列状态**',
     `• runtime: ${formatRuntimeLabel(runtime)}`,
     `• queued prompts: ${runtime.queued}`,
     `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
     runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
-    ...renderRecentActivitiesLines(runtime.recentActivities, Math.min(PROGRESS_ACTIVITY_MAX_LINES, 3)),
+    ...processLines,
     planSummary ? `• plan: ${planSummary}` : null,
     completedSummary ? `• completed milestones: ${completedSummary}` : null,
     runtime.progressAgoMs !== null ? `• progress updated: ${humanAge(runtime.progressAgoMs)} ago` : null,
@@ -1560,7 +1575,7 @@ function formatProgressReport(key, session = null, channel = null) {
       `• 提示: 发送新任务后可用 \`!progress\` / \`${slashRef('progress')}\` 查看实时进度。`,
     ].join('\n');
   }
-  const recentLines = localizeProgressLines(renderRecentActivitiesLines(runtime.recentActivities, PROGRESS_ACTIVITY_MAX_LINES), lang);
+  const processLines = renderProcessContentLines(runtime.recentActivities, lang);
   const planLines = localizeProgressLines(renderProgressPlanLines(runtime.progressPlan, PROGRESS_PLAN_MAX_LINES), lang);
   const completedLines = localizeProgressLines(renderCompletedStepsLines(runtime.completedSteps, {
     planState: runtime.progressPlan,
@@ -1573,7 +1588,7 @@ function formatProgressReport(key, session = null, channel = null) {
       `• runtime: ${formatRuntimeLabel(runtime, lang)}`,
       `• event count: ${runtime.progressEvents}`,
       runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
-      ...recentLines,
+      ...processLines,
       ...planLines,
       ...completedLines,
       runtime.progressAgoMs !== null ? `• last update: ${humanAge(runtime.progressAgoMs)} ago` : null,
@@ -1589,7 +1604,7 @@ function formatProgressReport(key, session = null, channel = null) {
     `• 运行状态: ${formatRuntimeLabel(runtime, lang)}`,
     `• 事件数: ${runtime.progressEvents}`,
     runtime.progressText ? `• 最新活动: ${runtime.progressText}` : null,
-    ...recentLines,
+    ...processLines,
     ...planLines,
     ...completedLines,
     runtime.progressAgoMs !== null ? `• 上次更新: ${humanAge(runtime.progressAgoMs)}前` : null,
@@ -2404,7 +2419,7 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       `${lang === 'en' ? '• phase' : '• 阶段'}: ${phase}`,
       `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
       `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
-      ...localizeProgressLines(renderRecentActivitiesLines(recentActivities, PROGRESS_ACTIVITY_MAX_LINES), lang),
+      ...renderProcessContentLines(recentActivities, lang),
       ...localizeProgressLines(renderProgressPlanLines(planState, PROGRESS_PLAN_MAX_LINES), lang),
       ...localizeProgressLines(renderCompletedStepsLines(completedSteps, {
         planState,
@@ -2467,7 +2482,12 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
   const onEvent = (ev) => {
     if (stopped) return;
     events += 1;
-    latestStep = summarizeCodexEvent(ev);
+    const summaryStep = summarizeCodexEvent(ev);
+    if (summaryStep && !summaryStep.startsWith('agent message')) {
+      latestStep = summaryStep;
+    } else if (!latestStep) {
+      latestStep = summaryStep;
+    }
     const rawActivity = extractRawProgressTextFromEvent(ev);
     if (rawActivity) {
       appendRecentActivity(recentActivities, rawActivity);
@@ -2522,7 +2542,7 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       `${lang === 'en' ? '• phase' : '• 阶段'}: ${formatRuntimePhaseLabel(channelState.activeRun?.phase || 'done', lang)}`,
       `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
       `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
-      ...localizeProgressLines(renderRecentActivitiesLines(recentActivities, PROGRESS_ACTIVITY_MAX_LINES), lang),
+      ...renderProcessContentLines(recentActivities, lang),
       ...localizeProgressLines(renderProgressPlanLines(planState, PROGRESS_PLAN_MAX_LINES), lang),
       ...localizeProgressLines(renderCompletedStepsLines(completedSteps, {
         planState,
@@ -2589,7 +2609,7 @@ function appendCompletedStep(list, stepText) {
 function appendRecentActivity(list, activityText) {
   appendRecentActivityBase(list, activityText, {
     previewChars: PROGRESS_TEXT_PREVIEW_CHARS,
-    maxSteps: PROGRESS_ACTIVITY_MAX_LINES,
+    maxSteps: PROGRESS_PROCESS_LINES,
     truncateText: false,
     preserveWhitespace: true,
   });

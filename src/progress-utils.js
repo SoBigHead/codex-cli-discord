@@ -726,13 +726,13 @@ export function appendRecentActivity(list, activityText, options = {}) {
   const preserveWhitespace = options.preserveWhitespace === true;
   const truncateText = options.truncateText !== false;
   const text = preserveWhitespace
-    ? String(activityText || '').replace(/\r/g, '').trim()
+    ? String(activityText || '').replace(/\r/g, '').replace(/\n+/g, ' ').trim()
     : normalizeWhitespace(activityText);
   if (!text) return;
 
   const normalized = truncateText ? truncate(text, previewChars) : text;
   const key = normalizeWhitespace(normalized).toLowerCase();
-  const existing = list.findIndex((item) => String(item || '').toLowerCase() === key);
+  const existing = list.findIndex((item) => normalizeWhitespace(String(item || '')).toLowerCase() === key);
   if (existing >= 0) list.splice(existing, 1);
   list.push(normalized);
 
