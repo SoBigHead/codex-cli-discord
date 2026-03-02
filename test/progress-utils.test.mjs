@@ -152,7 +152,7 @@ test('extractRawProgressTextFromEvent keeps raw output_text delta text', () => {
   assert.equal(raw, '正在核对配置并准备提交修复，不做摘要模板转换。');
 });
 
-test('extractRawProgressTextFromEvent suppresses final agent_message completed snapshots', () => {
+test('extractRawProgressTextFromEvent keeps raw agent_message text for live activity stream', () => {
   const ev = {
     type: 'item_completed',
     item: {
@@ -162,7 +162,7 @@ test('extractRawProgressTextFromEvent suppresses final agent_message completed s
   };
 
   const raw = extractRawProgressTextFromEvent(ev);
-  assert.equal(raw, '');
+  assert.equal(raw, '截至2026年3月2日，已完成排查并给出结论。');
 });
 
 test('appendRecentActivity can keep full raw text without truncation', () => {

@@ -430,7 +430,11 @@ export function extractRawProgressTextFromEvent(ev) {
 
   if (type === 'item_completed' || type === 'item_started') {
     const itemType = normalizeEventType(item?.type || '');
-    if (itemType === 'agent_message') return '';
+    if (itemType === 'agent_message') {
+      const text = pickFirstRawText([item?.text]) || pickFirstRawTextFromContent(item?.content);
+      if (text) return text;
+      return '';
+    }
     if (itemType === 'reasoning') {
       const text = pickFirstRawText([item?.text]) || pickFirstRawTextFromContent(item?.content);
       if (text) return text;
@@ -455,6 +459,8 @@ export function extractRawProgressTextFromEvent(ev) {
       return '';
     }
     if (payloadType === 'agent_message') {
+      const text = pickFirstRawText([payload.text]) || pickFirstRawTextFromContent(payload.content);
+      if (text) return text;
       return '';
     }
   }

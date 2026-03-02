@@ -3080,7 +3080,9 @@ function composeResultText(result, session) {
     ].join('\n'));
   }
 
-  const answer = result.messages.join('\n\n').trim();
+  // Codex may emit multiple agent_message items (including process updates).
+  // Send only the latest message as final answer to avoid replaying the whole process at the end.
+  const answer = String(result.messages[result.messages.length - 1] || '').trim();
   sections.push(answer || '（Codex 没有返回可见文本）');
 
   const tail = [];
