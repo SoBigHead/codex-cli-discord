@@ -279,6 +279,10 @@ function bindClientHandlers(bot) {
   bot.on('interactionCreate', handleInteractionCreate);
 
   bot.on('error', (err) => {
+    if (isIgnorableDiscordRuntimeError(err)) {
+      console.warn(`Ignoring non-fatal Discord client error: ${safeError(err)}`);
+      return;
+    }
     console.error('Discord client error:', err);
     scheduleSelfHeal('client_error', err);
   });
@@ -424,10 +428,7 @@ async function handleInteractionCreate(interaction) {
       }
       await handleOnboardingButtonInteraction(interaction);
     } catch (err) {
-      const reply = interaction.replied || interaction.deferred
-        ? interaction.followUp.bind(interaction)
-        : interaction.reply.bind(interaction);
-      await reply({ content: `❌ ${safeError(err)}`, flags: 64 });
+      await safeInteractionFailureReply(interaction, err);
     }
     return;
   }
@@ -438,23 +439,27 @@ async function handleInteractionCreate(interaction) {
     return;
   }
 
-  if (!(await isAllowedInteractionChannel(interaction))) {
-    await interaction.reply({ content: '⛔ 当前频道未开放。', flags: 64 });
-    return;
-  }
-
-  const key = interaction.channelId;
-  if (!key) {
-    await interaction.reply({ content: '❌ 无法识别当前频道。', flags: 64 });
-    return;
-  }
-  const session = getSession(key);
-  const cmd = normalizeSlashCommandName(interaction.commandName);
-
   try {
+    // ACK early to avoid Discord 3-second interaction timeout under transient latency.
+    await interaction.deferReply({ flags: 64 });
+    const respond = (payload) => sendInteractionResponse(interaction, payload);
+
+    if (!(await isAllowedInteractionChannel(interaction))) {
+      await respond({ content: '⛔ 当前频道未开放。', flags: 64 });
+      return;
+    }
+
+    const key = interaction.channelId;
+    if (!key) {
+      await respond({ content: '❌ 无法识别当前频道。', flags: 64 });
+      return;
+    }
+    const session = getSession(key);
+    const cmd = normalizeSlashCommandName(interaction.commandName);
+
     switch (cmd) {
       case 'status': {
-        await interaction.reply({
+        await respond({
           content: formatStatusReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -465,7 +470,7 @@ async function handleInteractionCreate(interaction) {
         session.codexThreadId = null;
         session.configOverrides = [];
         saveDb();
-        await interaction.reply('♻️ 会话已清空，下条消息新开上下文。');
+        await respond('♻️ 会话已清空，下条消息新开上下文。');
         break;
       }
 
@@ -473,17 +478,17 @@ async function handleInteractionCreate(interaction) {
         try {
           const sessions = listRecentCodexSessions(10);
           if (!sessions.length) {
-            await interaction.reply({ content: '没有找到任何 Codex session。', flags: 64 });
+            await respond({ content: '没有找到任何 Codex session。', flags: 64 });
             break;
           }
 
           const lines = sessions.map((s, i) => `${i + 1}. \`${s.id}\` (${humanAge(Date.now() - s.mtime)} ago)`);
-          await interaction.reply({
+          await respond({
             content: [`**最近 Sessions**（用 \`${slashRef('resume')}\` 继承）`, ...lines].join('\n'),
             flags: 64,
           });
         } catch (err) {
-          await interaction.reply({ content: `❌ ${safeError(err)}`, flags: 64 });
+          await respond({ content: `❌ ${safeError(err)}`, flags: 64 });
         }
         break;
       }
@@ -492,14 +497,14 @@ async function handleInteractionCreate(interaction) {
         const p = interaction.options.getString('path');
         const resolved = resolvePath(p);
         if (!fs.existsSync(resolved)) {
-          await interaction.reply({ content: `❌ 目录不存在：\`${resolved}\``, flags: 64 });
+          await respond({ content: `❌ 目录不存在：\`${resolved}\``, flags: 64 });
           break;
         }
         ensureGitRepo(resolved);
         session.workspaceDir = resolved;
         session.codexThreadId = null;
         saveDb();
-        await interaction.reply(`✅ workspace → \`${resolved}\`（会话已重置）`);
+        await respond(`✅ workspace → \`${resolved}\`（会话已重置）`);
         break;
       }
 
@@ -507,7 +512,7 @@ async function handleInteractionCreate(interaction) {
         const name = interaction.options.getString('name');
         session.model = name.toLowerCase() === 'default' ? null : name;
         saveDb();
-        await interaction.reply(`✅ model = ${session.model || '(default)'}`);
+        await respond(`✅ model = ${session.model || '(default)'}`);
         break;
       }
 
@@ -515,7 +520,7 @@ async function handleInteractionCreate(interaction) {
         const level = interaction.options.getString('level');
         session.effort = level === 'default' ? null : level;
         saveDb();
-        await interaction.reply(`✅ effort = ${session.effort || '(default)'}`);
+        await respond(`✅ effort = ${session.effort || '(default)'}`);
         break;
       }
 
@@ -523,7 +528,7 @@ async function handleInteractionCreate(interaction) {
         const type = interaction.options.getString('type');
         session.mode = type;
         saveDb();
-        await interaction.reply(`✅ mode = ${session.mode}`);
+        await respond(`✅ mode = ${session.mode}`);
         break;
       }
 
@@ -531,7 +536,7 @@ async function handleInteractionCreate(interaction) {
         const sid = interaction.options.getString('session_id');
         session.codexThreadId = sid.trim();
         saveDb();
-        await interaction.reply(`✅ 已绑定 session: \`${session.codexThreadId}\``);
+        await respond(`✅ 已绑定 session: \`${session.codexThreadId}\``);
         break;
       }
 
@@ -539,12 +544,12 @@ async function handleInteractionCreate(interaction) {
         const label = interaction.options.getString('label').trim();
         session.name = label;
         saveDb();
-        await interaction.reply(`✅ session 命名为: **${label}**`);
+        await respond(`✅ session 命名为: **${label}**`);
         break;
       }
 
       case 'queue': {
-        await interaction.reply({
+        await respond({
           content: formatQueueReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -552,7 +557,7 @@ async function handleInteractionCreate(interaction) {
       }
 
       case 'doctor': {
-        await interaction.reply({
+        await respond({
           content: formatDoctorReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -562,14 +567,14 @@ async function handleInteractionCreate(interaction) {
       case 'onboarding': {
         const language = getSessionLanguage(session);
         if (!isOnboardingEnabled(session)) {
-          await interaction.reply({
+          await respond({
             content: formatOnboardingDisabledMessage(language),
             flags: 64,
           });
           break;
         }
         const step = 1;
-        await interaction.reply({
+        await respond({
           content: formatOnboardingStepReport(step, key, session, interaction.channel, language),
           components: buildOnboardingActionRows(step, interaction.user.id, session, language),
           flags: 64,
@@ -583,13 +588,13 @@ async function handleInteractionCreate(interaction) {
         if (action === 'on' || action === 'off') {
           session.onboardingEnabled = action === 'on';
           saveDb();
-          await interaction.reply({
+          await respond({
             content: formatOnboardingConfigReport(language, session.onboardingEnabled, true),
             flags: 64,
           });
           break;
         }
-        await interaction.reply({
+        await respond({
           content: formatOnboardingConfigReport(language, isOnboardingEnabled(session), false),
           flags: 64,
         });
@@ -601,7 +606,7 @@ async function handleInteractionCreate(interaction) {
         const language = parseUiLanguageInput(requested) || DEFAULT_UI_LANGUAGE;
         session.language = language;
         saveDb();
-        await interaction.reply({
+        await respond({
           content: formatLanguageConfigReport(language, true),
           flags: 64,
         });
@@ -611,7 +616,7 @@ async function handleInteractionCreate(interaction) {
       case 'profile': {
         const requested = interaction.options.getString('name');
         if (String(requested || '').toLowerCase() === 'status') {
-          await interaction.reply({
+          await respond({
             content: formatProfileConfigReport(getSessionLanguage(session), getEffectiveSecurityProfile(session).profile, false),
             flags: 64,
           });
@@ -619,7 +624,7 @@ async function handleInteractionCreate(interaction) {
         }
         const profile = parseSecurityProfileInput(requested);
         if (!profile) {
-          await interaction.reply({
+          await respond({
             content: formatProfileConfigHelp(getSessionLanguage(session)),
             flags: 64,
           });
@@ -627,7 +632,7 @@ async function handleInteractionCreate(interaction) {
         }
         session.securityProfile = profile;
         saveDb();
-        await interaction.reply({
+        await respond({
           content: formatProfileConfigReport(getSessionLanguage(session), profile, true),
           flags: 64,
         });
@@ -638,14 +643,14 @@ async function handleInteractionCreate(interaction) {
         const language = getSessionLanguage(session);
         const parsedTimeout = parseTimeoutConfigAction(interaction.options.getString('value'));
         if (!parsedTimeout || parsedTimeout.type === 'invalid') {
-          await interaction.reply({
+          await respond({
             content: formatTimeoutConfigHelp(language),
             flags: 64,
           });
           break;
         }
         if (parsedTimeout.type === 'status') {
-          await interaction.reply({
+          await respond({
             content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), false),
             flags: 64,
           });
@@ -653,7 +658,7 @@ async function handleInteractionCreate(interaction) {
         }
         session.timeoutMs = parsedTimeout.timeoutMs;
         saveDb();
-        await interaction.reply({
+        await respond({
           content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true),
           flags: 64,
         });
@@ -661,7 +666,7 @@ async function handleInteractionCreate(interaction) {
       }
 
       case 'progress': {
-        await interaction.reply({
+        await respond({
           content: formatProgressReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -670,18 +675,49 @@ async function handleInteractionCreate(interaction) {
 
       case 'cancel': {
         const outcome = cancelChannelWork(key, 'slash_cancel');
-        await interaction.reply({
+        await respond({
           content: formatCancelReport(outcome),
           flags: 64,
         });
         break;
       }
+
+      default: {
+        await respond({ content: `❌ 未知命令：\`${interaction.commandName}\``, flags: 64 });
+        break;
+      }
     }
   } catch (err) {
-    const reply = interaction.replied || interaction.deferred
-      ? interaction.followUp.bind(interaction)
-      : interaction.reply.bind(interaction);
-    await reply({ content: `❌ ${safeError(err)}`, flags: 64 });
+    await safeInteractionFailureReply(interaction, err);
+  }
+}
+
+async function sendInteractionResponse(interaction, payload) {
+  const body = typeof payload === 'string' ? { content: payload } : payload;
+  if (interaction.deferred && !interaction.replied) {
+    const { flags: _ignoredFlags, ...editPayload } = body;
+    return interaction.editReply(editPayload);
+  }
+  if (interaction.replied) {
+    return interaction.followUp(body);
+  }
+  return interaction.reply(body);
+}
+
+async function safeInteractionFailureReply(interaction, err) {
+  if (isIgnorableDiscordRuntimeError(err)) {
+    console.warn(`Ignoring non-fatal interaction error: ${safeError(err)}`);
+    return;
+  }
+
+  try {
+    await sendInteractionResponse(interaction, { content: `❌ ${safeError(err)}`, flags: 64 });
+  } catch (replyErr) {
+    if (isIgnorableDiscordRuntimeError(replyErr)) {
+      console.warn(`Ignoring non-fatal interaction reply error: ${safeError(replyErr)}`);
+      return;
+    }
+    throw replyErr;
   }
 }
 
@@ -780,12 +816,20 @@ function setupProcessSelfHeal() {
 
   process.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
+    if (isIgnorableDiscordRuntimeError(err)) {
+      console.warn(`Ignoring non-fatal unhandled rejection: ${safeError(err)}`);
+      return;
+    }
     console.error('Unhandled rejection:', err);
     if (isInvalidTokenError(err)) return;
     scheduleSelfHeal('unhandled_rejection', err);
   });
 
   process.on('uncaughtException', (err) => {
+    if (isIgnorableDiscordRuntimeError(err)) {
+      console.warn(`Ignoring non-fatal uncaught exception: ${safeError(err)}`);
+      return;
+    }
     console.error('Uncaught exception:', err);
     if (isInvalidTokenError(err)) return;
     scheduleSelfHeal('uncaught_exception', err);
@@ -804,6 +848,14 @@ function isRecoverableGatewayCloseCode(code) {
 function isInvalidTokenError(err) {
   const msg = String(err?.message || err || '').toLowerCase();
   return msg.includes('invalid token');
+}
+
+function isIgnorableDiscordRuntimeError(err) {
+  const code = Number(err?.code);
+  if (code === 10062 || code === 40060) return true;
+
+  const msg = String(err?.message || err || '').toLowerCase();
+  return msg.includes('unknown interaction') || msg.includes('interaction has already been acknowledged');
 }
 
 function sleep(ms) {
