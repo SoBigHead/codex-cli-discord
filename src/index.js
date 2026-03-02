@@ -14,6 +14,7 @@ import {
   extractPlanStateFromEvent as extractPlanStateFromEventBase,
   renderRecentActivitiesLines as renderRecentActivitiesLinesBase,
   formatProgressPlanSummary as formatProgressPlanSummaryBase,
+  summarizeAudienceActivity as summarizeAudienceActivityBase,
   renderProgressPlanLines as renderProgressPlanLinesBase,
   summarizeCodexEvent as summarizeCodexEventBase,
 } from './progress-utils.js';
@@ -2467,7 +2468,10 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
     if (stopped) return;
     events += 1;
     latestStep = summarizeCodexEvent(ev);
-    appendRecentActivity(recentActivities, latestStep);
+    const audienceActivity = summarizeAudienceActivity(ev);
+    if (audienceActivity) {
+      appendRecentActivity(recentActivities, audienceActivity);
+    }
     const nextPlan = extractPlanStateFromEvent(ev);
     if (nextPlan) {
       planState = nextPlan;
@@ -2548,6 +2552,13 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
 
 function summarizeCodexEvent(ev) {
   return summarizeCodexEventBase(ev, {
+    showReasoning: SHOW_REASONING,
+    previewChars: PROGRESS_TEXT_PREVIEW_CHARS,
+  });
+}
+
+function summarizeAudienceActivity(ev) {
+  return summarizeAudienceActivityBase(ev, {
     showReasoning: SHOW_REASONING,
     previewChars: PROGRESS_TEXT_PREVIEW_CHARS,
   });

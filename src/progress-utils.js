@@ -269,6 +269,23 @@ function summarizeResponseItem(payload, options = {}) {
   return '';
 }
 
+function isLowSignalAudienceSummary(summaryText) {
+  const text = normalizeWhitespace(summaryText).toLowerCase();
+  if (!text) return true;
+
+  if (/^agent message (started|completed)(:|$)/.test(text)) return true;
+  if (text === 'agent message delta') return true;
+  if (/^reasoning(\s|$)/.test(text)) return true;
+  if (/^web search(\s|$)/.test(text)) return true;
+  if (/^turn (started|completed)(\s|$)/.test(text)) return true;
+  if (/^session started(\s|$)/.test(text)) return true;
+  if (/^command (started|completed|updated)(:|$)/.test(text)) return true;
+  if (/^tool(\s|$)/.test(text)) return true;
+  if (/^item(\s|$)/.test(text)) return true;
+
+  return false;
+}
+
 export function summarizeCodexEvent(ev, options = {}) {
   const previewChars = Math.max(60, Number(options.previewChars || DEFAULT_PREVIEW_CHARS));
   const showReasoning = Boolean(options.showReasoning);
@@ -379,6 +396,53 @@ export function summarizeCodexEvent(ev, options = {}) {
   }
 
   return prettifyEventType(rawType);
+}
+
+export function summarizeAudienceActivity(ev, options = {}) {
+  if (!ev || typeof ev !== 'object') return '';
+  const type = normalizeEventType(ev.type || '');
+  const payload = extractEventPayload(ev);
+  const item = ev.item && typeof ev.item === 'object' ? ev.item : null;
+
+  if (type === 'thread_started' || type === 'turn_started' || type === 'turn_completed') {
+    return '';
+  }
+  if (type.startsWith('web_search_') || type.startsWith('exec_command_')) {
+    return '';
+  }
+
+  if (type === 'response_item' && payload && typeof payload === 'object') {
+    const payloadType = normalizeEventType(payload.type || '');
+    if ([
+      'message',
+      'reasoning',
+      'web_search_call',
+      'local_shell_call',
+      'function_call',
+      'custom_tool_call',
+    ].includes(payloadType)) {
+      return '';
+    }
+  }
+
+  if (type === 'item_started' || type === 'item_completed') {
+    const itemType = normalizeEventType(item?.type || '');
+    if ([
+      'agent_message',
+      'reasoning',
+      'web_search_call',
+      'local_shell_call',
+      'function_call',
+      'custom_tool_call',
+    ].includes(itemType)) {
+      return '';
+    }
+  }
+
+  const summary = summarizeCodexEvent(ev, options);
+  if (!summary) return '';
+  if (isLowSignalAudienceSummary(summary)) return '';
+  return summary;
 }
 
 export function extractEventTextPreview(item, options = {}) {

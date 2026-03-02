@@ -7,6 +7,7 @@ import {
   extractCompletedStepFromEvent,
   extractPlanStateFromEvent,
   renderRecentActivitiesLines,
+  summarizeAudienceActivity,
   summarizeCodexEvent,
 } from '../src/progress-utils.js';
 
@@ -129,4 +130,37 @@ test('renderRecentActivitiesLines renders latest activity window', () => {
     '• activity 1: step 2',
     '• activity 2: step 3',
   ]);
+});
+
+test('summarizeAudienceActivity filters low-signal web search completion events', () => {
+  const ev = {
+    type: 'web_search_completed',
+    query: 'OpenAI Codex CLI release notes',
+  };
+
+  const summary = summarizeAudienceActivity(ev, { previewChars: 180 });
+  assert.equal(summary, '');
+});
+
+test('summarizeAudienceActivity keeps output_text delta content for audience stream', () => {
+  const ev = {
+    type: 'response.output_text.delta',
+    delta: '正在核对配置并准备提交修复',
+  };
+
+  const summary = summarizeAudienceActivity(ev, { previewChars: 180 });
+  assert.equal(summary, 'agent message: 正在核对配置并准备提交修复');
+});
+
+test('summarizeAudienceActivity suppresses agent message completed snapshot events', () => {
+  const ev = {
+    type: 'item_completed',
+    item: {
+      type: 'agent_message',
+      text: '截至2026年3月2日，已完成排查并给出结论。',
+    },
+  };
+
+  const summary = summarizeAudienceActivity(ev, { previewChars: 180 });
+  assert.equal(summary, '');
 });
