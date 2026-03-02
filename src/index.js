@@ -396,6 +396,10 @@ const slashCommands = [
     .setDescription('设置当前频道 codex timeout（ms/off/status）')
     .addStringOption(o => o.setName('value').setDescription('如 60000 / off / status').setRequired(true)),
   new SlashCommandBuilder()
+    .setName(slashName('process_lines'))
+    .setDescription('设置过程内容窗口行数（1-5 或 status）')
+    .addStringOption(o => o.setName('value').setDescription('如 2 / 3 / 5 / status').setRequired(true)),
+  new SlashCommandBuilder()
     .setName(slashName('progress'))
     .setDescription('查看当前任务的最新执行进度'),
   new SlashCommandBuilder()
@@ -667,6 +671,32 @@ async function handleInteractionCreate(interaction) {
         saveDb();
         await respond({
           content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true),
+          flags: 64,
+        });
+        break;
+      }
+
+      case 'process_lines': {
+        const language = getSessionLanguage(session);
+        const parsed = parseProcessLinesConfigAction(interaction.options.getString('value'));
+        if (!parsed || parsed.type === 'invalid') {
+          await respond({
+            content: formatProcessLinesConfigHelp(language),
+            flags: 64,
+          });
+          break;
+        }
+        if (parsed.type === 'status') {
+          await respond({
+            content: formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), false),
+            flags: 64,
+          });
+          break;
+        }
+        session.processLines = parsed.lines;
+        saveDb();
+        await respond({
+          content: formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), true),
           flags: 64,
         });
         break;
@@ -1074,6 +1104,25 @@ async function handleCommand(message, key, content) {
       break;
     }
 
+    case '!processlines':
+    case '!progresslines':
+    case '!plines': {
+      const language = getSessionLanguage(session);
+      const parsed = parseProcessLinesConfigAction(arg || 'status');
+      if (!parsed || parsed.type === 'invalid') {
+        await safeReply(message, formatProcessLinesConfigHelp(language));
+        break;
+      }
+      if (parsed.type === 'status') {
+        await safeReply(message, formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), false));
+        break;
+      }
+      session.processLines = parsed.lines;
+      saveDb();
+      await safeReply(message, formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), true));
+      break;
+    }
+
     case '!progress': {
       await safeReply(message, formatProgressReport(key, session, message.channel));
       break;
@@ -1439,11 +1488,11 @@ function localizeProgressLines(lines, language = 'en') {
   return lines.map((line) => localizeProgressLine(line, language));
 }
 
-function renderProcessContentLines(activities, language = 'en') {
-  const count = PROGRESS_PROCESS_LINES;
+function renderProcessContentLines(activities, language = 'en', count = PROGRESS_PROCESS_LINES) {
+  const limit = Math.max(1, Math.min(5, Number(count || PROGRESS_PROCESS_LINES)));
   const visible = Array.isArray(activities)
     ? activities
-      .slice(-count)
+      .slice(-limit)
       .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
       .filter(Boolean)
     : [];
@@ -1484,6 +1533,7 @@ function formatStatusReport(key, session, channel = null) {
   const security = resolveSecurityContext(channel, session);
   const language = getSessionLanguage(session);
   const timeoutSetting = resolveTimeoutSetting(session);
+  const processLinesSetting = resolveProcessLinesSetting(session);
   const securitySetting = getEffectiveSecurityProfile(session);
   const modeDesc = session.mode === 'dangerous'
     ? 'dangerous (无沙盒, 全权限)'
@@ -1494,7 +1544,7 @@ function formatStatusReport(key, session, channel = null) {
     latestStep: runtime.progressText,
     maxSteps: 3,
   });
-  const processLines = renderProcessContentLines(runtime.recentActivities, normalizeUiLanguage(language));
+  const processLines = renderProcessContentLines(runtime.recentActivities, normalizeUiLanguage(language), processLinesSetting.lines);
 
   return [
     '🧭 **当前配置**',
@@ -1526,6 +1576,7 @@ function formatStatusReport(key, session, channel = null) {
     `• !config: ${formatConfigCommandStatus()}`,
     `• config allowlist: ${describeConfigPolicy()}`,
     `• codex timeout: ${formatTimeoutLabel(timeoutSetting.timeoutMs)} (${timeoutSetting.source})`,
+    `• process window: ${processLinesSetting.lines} lines (${processLinesSetting.source})`,
     `• compact strategy: ${describeCompactStrategy(COMPACT_STRATEGY)}`,
     `• compact trigger: ${COMPACT_ON_THRESHOLD ? 'on' : 'off'}`,
     `• compact threshold: ${MAX_INPUT_TOKENS_BEFORE_COMPACT}`,
@@ -1541,13 +1592,14 @@ function formatStatusReport(key, session, channel = null) {
 function formatQueueReport(key, session = null, channel = null) {
   const runtime = getRuntimeSnapshot(key);
   const security = resolveSecurityContext(channel, session);
+  const processLinesSetting = resolveProcessLinesSetting(session);
   const planSummary = formatProgressPlanSummary(runtime.progressPlan);
   const completedSummary = formatCompletedStepsSummary(runtime.completedSteps, {
     planState: runtime.progressPlan,
     latestStep: runtime.progressText,
     maxSteps: 3,
   });
-  const processLines = renderProcessContentLines(runtime.recentActivities, 'en');
+  const processLines = renderProcessContentLines(runtime.recentActivities, 'en', processLinesSetting.lines);
   return [
     '📮 **任务队列状态**',
     `• runtime: ${formatRuntimeLabel(runtime)}`,
@@ -1568,6 +1620,7 @@ function formatProgressReport(key, session = null, channel = null) {
   const security = resolveSecurityContext(channel, session);
   const language = getSessionLanguage(session);
   const lang = normalizeUiLanguage(language);
+  const processLinesSetting = resolveProcessLinesSetting(session);
   if (!runtime.running) {
     if (lang === 'en') {
       return [
@@ -1584,7 +1637,7 @@ function formatProgressReport(key, session = null, channel = null) {
       `• 提示: 发送新任务后可用 \`!progress\` / \`${slashRef('progress')}\` 查看实时进度。`,
     ].join('\n');
   }
-  const processLines = renderProcessContentLines(runtime.recentActivities, lang);
+  const processLines = renderProcessContentLines(runtime.recentActivities, lang, processLinesSetting.lines);
   const planLines = localizeProgressLines(renderProgressPlanLines(runtime.progressPlan, PROGRESS_PLAN_MAX_LINES), lang);
   const completedLines = localizeProgressLines(renderCompletedStepsLines(runtime.completedSteps, {
     planState: runtime.progressPlan,
@@ -1720,6 +1773,23 @@ function resolveTimeoutSetting(session) {
   return { timeoutMs: CODEX_TIMEOUT_MS, source: 'env default' };
 }
 
+function normalizeSessionProcessLines(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.floor(n);
+  if (rounded < 1 || rounded > 5) return null;
+  return rounded;
+}
+
+function resolveProcessLinesSetting(session) {
+  const sessionLines = normalizeSessionProcessLines(session?.processLines);
+  if (sessionLines !== null) {
+    return { lines: sessionLines, source: 'session override' };
+  }
+  return { lines: PROGRESS_PROCESS_LINES, source: 'default' };
+}
+
 function parseTimeoutConfigAction(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
@@ -1730,6 +1800,16 @@ function parseTimeoutConfigAction(value) {
   if (!/^\d+$/.test(raw)) return { type: 'invalid' };
   const timeoutMs = normalizeTimeoutMs(Number(raw), 0);
   return { type: 'set', timeoutMs };
+}
+
+function parseProcessLinesConfigAction(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (['status', 'show', 'state', '查看', '状态'].includes(raw)) return { type: 'status' };
+  if (!/^\d+$/.test(raw)) return { type: 'invalid' };
+  const lines = normalizeSessionProcessLines(Number(raw));
+  if (lines === null) return { type: 'invalid' };
+  return { type: 'set', lines };
 }
 
 function isOnboardingEnabled(session) {
@@ -1828,6 +1908,33 @@ function formatTimeoutConfigReport(language, timeoutSetting, changed) {
     : `ℹ️ 当前 Codex 超时为 ${label}`;
 }
 
+function formatProcessLinesConfigHelp(language) {
+  if (language === 'en') {
+    return [
+      'Usage: `!processlines <1|2|3|4|5|status>`',
+      `Slash: \`${slashRef('process_lines')} <1-5|status>\``,
+      'Examples: `!processlines 2`, `!processlines status`',
+    ].join('\n');
+  }
+  return [
+    '用法：`!processlines <1|2|3|4|5|status>`',
+    `Slash：\`${slashRef('process_lines')} <1-5|status>\``,
+    '示例：`!processlines 2`、`!processlines status`',
+  ].join('\n');
+}
+
+function formatProcessLinesConfigReport(language, setting, changed) {
+  const label = `${setting.lines} (${setting.source})`;
+  if (language === 'en') {
+    return changed
+      ? `✅ Process content window set to ${label}`
+      : `ℹ️ Process content window is ${label}`;
+  }
+  return changed
+    ? `✅ 过程内容窗口已设置为 ${label}`
+    : `ℹ️ 当前过程内容窗口为 ${label}`;
+}
+
 function formatOnboardingDisabledMessage(language) {
   if (language === 'en') {
     return [
@@ -1884,6 +1991,7 @@ function formatHelpReport(session) {
       `• \`${slashRef('language')} <中文|English>\` / \`!lang <zh|en>\` — message language`,
       `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — channel security profile`,
       `• \`${slashRef('timeout')} <ms|off|status>\` / \`!timeout <...>\` — codex timeout`,
+      `• \`${slashRef('process_lines')} <1-5|status>\` / \`!processlines <...>\` — process content window lines`,
       '• `!progress` — current run progress',
       '• `!abort` / `!cancel` / `!stop` — stop running task and clear queue',
       '• `!reset` — clear session context',
@@ -1916,6 +2024,7 @@ function formatHelpReport(session) {
     `• \`${slashRef('language')} <中文|English>\` / \`!lang <zh|en>\` — 消息提示语言`,
     `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — 当前频道 security profile`,
     `• \`${slashRef('timeout')} <毫秒|off|status>\` / \`!timeout <...>\` — Codex 超时`,
+    `• \`${slashRef('process_lines')} <1-5|status>\` / \`!processlines <...>\` — 过程内容窗口行数`,
     '• `!progress` — 查看当前任务的最新进度',
     '• `!abort` / `!cancel` / `!stop` — 中断当前任务并清空队列',
     '• `!reset` — 清空会话，下条消息新开上下文',
@@ -2372,11 +2481,17 @@ async function handleOnboardingButtonInteraction(interaction) {
   });
 }
 
-function createProgressReporter({ message, channelState, language = DEFAULT_UI_LANGUAGE }) {
+function createProgressReporter({
+  message,
+  channelState,
+  language = DEFAULT_UI_LANGUAGE,
+  processLines = PROGRESS_PROCESS_LINES,
+}) {
   if (!PROGRESS_UPDATES_ENABLED) return null;
 
   const startedAt = Date.now();
   const lang = normalizeUiLanguage(language);
+  const processLineLimit = Math.max(1, Math.min(5, Number(processLines || PROGRESS_PROCESS_LINES)));
   let progressMessage = null;
   let timer = null;
   let stopped = false;
@@ -2431,7 +2546,7 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       `${lang === 'en' ? '• phase' : '• 阶段'}: ${phase}`,
       `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
       `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
-      ...renderProcessContentLines(recentActivities, lang),
+      ...renderProcessContentLines(recentActivities, lang, processLineLimit),
       ...localizeProgressLines(renderProgressPlanLines(planState, PROGRESS_PLAN_MAX_LINES), lang),
       ...localizeProgressLines(renderCompletedStepsLines(completedSteps, {
         planState,
@@ -2600,7 +2715,7 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       `${lang === 'en' ? '• phase' : '• 阶段'}: ${formatRuntimePhaseLabel(channelState.activeRun?.phase || 'done', lang)}`,
       `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
       `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
-      ...renderProcessContentLines(recentActivities, lang),
+      ...renderProcessContentLines(recentActivities, lang, processLineLimit),
       ...localizeProgressLines(renderProgressPlanLines(planState, PROGRESS_PLAN_MAX_LINES), lang),
       ...localizeProgressLines(renderCompletedStepsLines(completedSteps, {
         planState,
@@ -2667,7 +2782,7 @@ function appendCompletedStep(list, stepText) {
 function appendRecentActivity(list, activityText) {
   appendRecentActivityBase(list, activityText, {
     previewChars: PROGRESS_TEXT_PREVIEW_CHARS,
-    maxSteps: PROGRESS_PROCESS_LINES,
+    maxSteps: 5,
     truncateText: false,
     preserveWhitespace: true,
   });
@@ -2719,6 +2834,7 @@ async function handlePrompt(message, key, prompt, channelState) {
     message,
     channelState,
     language: getSessionLanguage(session),
+    processLines: resolveProcessLinesSetting(session).lines,
   });
   await progress?.start();
   let progressOutcome = { ok: false, cancelled: false, timedOut: false, error: '' };
@@ -3360,6 +3476,7 @@ function getSession(key) {
       onboardingEnabled: ONBOARDING_ENABLED_BY_DEFAULT,
       securityProfile: null,
       timeoutMs: null,
+      processLines: null,
       configOverrides: [],
       updatedAt: new Date().toISOString(),
     };
@@ -3400,6 +3517,10 @@ function getSession(key) {
     s.timeoutMs = null;
     migrated = true;
   }
+  if (s.processLines === undefined) {
+    s.processLines = null;
+    migrated = true;
+  }
   const normalizedLanguage = normalizeUiLanguage(s.language);
   if (s.language !== normalizedLanguage) {
     s.language = normalizedLanguage;
@@ -3413,6 +3534,11 @@ function getSession(key) {
   const normalizedTimeoutMs = normalizeSessionTimeoutMs(s.timeoutMs);
   if (s.timeoutMs !== normalizedTimeoutMs) {
     s.timeoutMs = normalizedTimeoutMs;
+    migrated = true;
+  }
+  const normalizedProcessLines = normalizeSessionProcessLines(s.processLines);
+  if (s.processLines !== normalizedProcessLines) {
+    s.processLines = normalizedProcessLines;
     migrated = true;
   }
   s.updatedAt = new Date().toISOString();
