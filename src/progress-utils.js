@@ -282,6 +282,16 @@ export function summarizeCodexEvent(ev, options = {}) {
   const type = normalizeEventType(rawType);
   const payload = extractEventPayload(ev);
 
+  if (type === 'event_msg' && payload && typeof payload === 'object') {
+    const nestedType = normalizeWhitespace(payload.type || '');
+    if (nestedType && nestedType.toLowerCase() !== 'event_msg') {
+      return summarizeCodexEvent({
+        ...payload,
+        type: nestedType,
+      }, options);
+    }
+  }
+
   if (type === 'response_item' && payload) {
     const summary = summarizeResponseItem(payload, opts);
     if (summary) return summary;
@@ -379,6 +389,118 @@ export function summarizeCodexEvent(ev, options = {}) {
   }
 
   return prettifyEventType(rawType);
+}
+
+function pickFirstRawText(values) {
+  if (!Array.isArray(values)) return '';
+  for (const value of values) {
+    if (typeof value !== 'string') continue;
+    const text = value.replace(/\r/g, '').trim();
+    if (text) return text;
+  }
+  return '';
+}
+
+function pickFirstRawTextFromContent(content) {
+  if (!Array.isArray(content)) return '';
+  for (const part of content) {
+    if (!part || typeof part !== 'object') continue;
+    const text = pickFirstRawText([
+      part.delta,
+      part.text,
+      part.output_text,
+      part.input_text,
+      part.reasoning_text,
+    ]);
+    if (text) return text;
+  }
+  return '';
+}
+
+function isLowSignalProcessText(text) {
+  const normalized = normalizeWhitespace(text);
+  if (!normalized) return true;
+  const lower = normalized.toLowerCase();
+  if (lower === '...') return true;
+  if (/^asking\b/.test(lower)) return true;
+  if (/^reasoning\b/.test(lower)) return true;
+  if (/^thinking\b/.test(lower)) return true;
+  return false;
+}
+
+export function extractRawProgressTextFromEvent(ev) {
+  if (!ev || typeof ev !== 'object') return '';
+  const type = normalizeEventType(ev.type || '');
+  const payload = extractEventPayload(ev);
+  const item = ev.item && typeof ev.item === 'object' ? ev.item : null;
+
+  if (type === 'event_msg' && payload && typeof payload === 'object') {
+    const nestedType = normalizeEventType(payload.type || '');
+    if (nestedType === 'agent_message') {
+      const phase = normalizeEventType(payload.phase || '');
+      if (phase === 'final_answer') return '';
+      const text = pickFirstRawText([
+        payload.message,
+        payload.text,
+        payload.payload?.text,
+      ]);
+      if (!text || isLowSignalProcessText(text)) return '';
+      return text;
+    }
+    if (nestedType === 'agent_reasoning' || nestedType === 'reasoning') return '';
+    if (nestedType) {
+      return extractRawProgressTextFromEvent({
+        ...payload,
+        type: payload.type,
+      });
+    }
+  }
+
+  if (type.endsWith('_delta')) {
+    if (type.includes('reasoning')) return '';
+    if (!(type.includes('output_text') || type.includes('message') || type.includes('content_part'))) return '';
+    const text = pickFirstRawText([
+      ev.delta,
+      ev.text_delta,
+      ev.output_text_delta,
+      payload?.delta,
+      payload?.text_delta,
+      payload?.output_text_delta,
+      payload?.text,
+    ]) || pickFirstRawTextFromContent(payload?.content);
+    if (!text || isLowSignalProcessText(text)) return '';
+    return text;
+  }
+
+  if (type === 'item_completed' || type === 'item_started') {
+    const itemType = normalizeEventType(item?.type || '');
+    if (itemType === 'agent_message') return '';
+    if (itemType === 'reasoning') return '';
+    if (itemType === 'message') return '';
+    return '';
+  }
+
+  if (type === 'response_item' && payload && typeof payload === 'object') {
+    const payloadType = normalizeEventType(payload.type || '');
+    if (payloadType === 'message') {
+      const phase = normalizeEventType(payload.phase || '');
+      const role = normalizeEventType(payload.role || '');
+      if (phase === 'final_answer') return '';
+      if (role && role !== 'assistant') return '';
+      const text = pickFirstRawText([
+        payload.message,
+        payload.text,
+        payload.output_text,
+        payload.input_text,
+      ]) || pickFirstRawTextFromContent(payload.content);
+      if (!text || isLowSignalProcessText(text)) return '';
+      return text;
+    }
+    if (payloadType === 'reasoning') return '';
+    if (payloadType === 'agent_message') return '';
+  }
+
+  return '';
 }
 
 export function extractEventTextPreview(item, options = {}) {
@@ -622,7 +744,7 @@ export function appendCompletedStep(list, stepText, options = {}) {
 
   const normalized = truncate(text, previewChars);
   const key = normalized.toLowerCase();
-  const existing = list.findIndex((item) => String(item || '').toLowerCase() === key);
+  const existing = list.findIndex((item) => normalizeWhitespace(String(item || '')).toLowerCase() === key);
   if (existing >= 0) list.splice(existing, 1);
   list.push(normalized);
 
@@ -636,12 +758,16 @@ export function appendRecentActivity(list, activityText, options = {}) {
   if (!Array.isArray(list)) return;
   const previewChars = Math.max(60, Number(options.previewChars || DEFAULT_PREVIEW_CHARS));
   const maxSteps = Math.max(1, Number(options.maxSteps || DEFAULT_ACTIVITY_MAX));
-  const text = normalizeWhitespace(activityText);
+  const preserveWhitespace = options.preserveWhitespace === true;
+  const truncateText = options.truncateText !== false;
+  const text = preserveWhitespace
+    ? String(activityText || '').replace(/\r/g, '').replace(/\n+/g, ' ').trim()
+    : normalizeWhitespace(activityText);
   if (!text) return;
 
-  const normalized = truncate(text, previewChars);
-  const key = normalized.toLowerCase();
-  const existing = list.findIndex((item) => String(item || '').toLowerCase() === key);
+  const normalized = truncateText ? truncate(text, previewChars) : text;
+  const key = normalizeWhitespace(normalized).toLowerCase();
+  const existing = list.findIndex((item) => normalizeWhitespace(String(item || '')).toLowerCase() === key);
   if (existing >= 0) list.splice(existing, 1);
   list.push(normalized);
 

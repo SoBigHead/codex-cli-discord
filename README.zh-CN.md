@@ -93,6 +93,7 @@ Git hooks 说明：
 - `PROGRESS_UPDATES_ENABLED`：是否启用频道实时进度更新（默认 `true`）
 - `PROGRESS_UPDATE_INTERVAL_MS`：进度消息心跳刷新间隔
 - `PROGRESS_EVENT_FLUSH_MS`：事件触发进度编辑的最小间隔
+- `PROGRESS_EVENT_DEDUPE_WINDOW_MS`：语义相同进度事件（stdout + rollout bridge）的去重窗口（毫秒，默认 `2500`）
 - `PROGRESS_TEXT_PREVIEW_CHARS`："最新步骤" 预览截断长度
 - `PROGRESS_INCLUDE_STDERR`：进度预览中是否包含原始 stderr（噪声较大，默认 `false`）
 - `PROGRESS_PLAN_MAX_LINES`：进度中展示的 plan 条目上限（默认 `4`）

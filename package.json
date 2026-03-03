@@ -11,7 +11,7 @@
     "setup-hooks": "git config core.hooksPath .githooks",
     "check:atomic": "node scripts/check-atomic-commit.mjs --staged",
     "check:reply-fallback": "node scripts/check-safe-reply.mjs",
-    "test:progress": "node --test test/progress-utils.test.mjs test/progress-milestones.test.mjs",
+    "test:progress": "node --test test/progress-utils.test.mjs test/progress-milestones.test.mjs test/codex-event-utils.test.mjs",
     "release:patch": "node scripts/cut-release.mjs patch",
     "release:minor": "node scripts/cut-release.mjs minor",
     "release:major": "node scripts/cut-release.mjs major",

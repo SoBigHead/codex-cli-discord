@@ -95,6 +95,7 @@ Important knobs:
 - `PROGRESS_UPDATES_ENABLED`: enable/disable live progress updates in channel (default `true`)
 - `PROGRESS_UPDATE_INTERVAL_MS`: heartbeat refresh interval for progress message
 - `PROGRESS_EVENT_FLUSH_MS`: min interval for event-triggered progress edits
+- `PROGRESS_EVENT_DEDUPE_WINDOW_MS`: dedupe window for semantically identical progress events (stdout + rollout bridge), in ms (default `2500`)
 - `PROGRESS_TEXT_PREVIEW_CHARS`: truncation length for “latest step” preview
 - `PROGRESS_INCLUDE_STDOUT`: include non-JSON stdout lines in progress activity (default `true`)
 - `PROGRESS_INCLUDE_STDERR`: include raw stderr lines in progress preview (noisy; default `false`)

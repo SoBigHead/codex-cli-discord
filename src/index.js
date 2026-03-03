@@ -5,11 +5,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import { SocksProxyAgent } from 'socks-proxy-agent';
-import { safeReply } from './discord-reply-utils.js';
+import { safeReply, withDiscordNetworkRetry } from './discord-reply-utils.js';
 import {
   appendRecentActivity as appendRecentActivityBase,
   appendCompletedStep as appendCompletedStepBase,
   cloneProgressPlan as cloneProgressPlanBase,
+  extractRawProgressTextFromEvent as extractRawProgressTextFromEventBase,
   extractCompletedStepFromEvent as extractCompletedStepFromEventBase,
   extractPlanStateFromEvent as extractPlanStateFromEventBase,
   renderRecentActivitiesLines as renderRecentActivitiesLinesBase,
@@ -17,6 +18,13 @@ import {
   renderProgressPlanLines as renderProgressPlanLinesBase,
   summarizeCodexEvent as summarizeCodexEventBase,
 } from './progress-utils.js';
+import {
+  buildProgressEventDedupeKey,
+  composeFinalAnswerText,
+  createProgressEventDeduper,
+  extractAgentMessageText,
+  isFinalAnswerLikeAgentMessage,
+} from './codex-event-utils.js';
 import {
   formatCompletedMilestonesSummary,
   renderCompletedMilestonesLines,
@@ -120,6 +128,17 @@ const PROGRESS_INCLUDE_STDERR = String(process.env.PROGRESS_INCLUDE_STDERR || 'f
 const PROGRESS_PLAN_MAX_LINES = Math.min(8, Math.max(1, toInt(process.env.PROGRESS_PLAN_MAX_LINES, 4)));
 const PROGRESS_DONE_STEPS_MAX = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_DONE_STEPS_MAX, 4)));
 const PROGRESS_ACTIVITY_MAX_LINES = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_ACTIVITY_MAX_LINES, 4)));
+const PROGRESS_EVENT_DEDUPE_WINDOW_MS = normalizeIntervalMs(
+  process.env.PROGRESS_EVENT_DEDUPE_WINDOW_MS,
+  2500,
+  200,
+);
+const PROGRESS_PROCESS_LINES = 2;
+const PROGRESS_PROCESS_PUSH_INTERVAL_MS = normalizeIntervalMs(
+  process.env.PROGRESS_PROCESS_PUSH_INTERVAL_MS,
+  1100,
+  300,
+);
 const PROGRESS_MESSAGE_MAX_CHARS = Math.max(600, toInt(process.env.PROGRESS_MESSAGE_MAX_CHARS, 1800));
 const SELF_HEAL_ENABLED = String(process.env.SELF_HEAL_ENABLED || 'true').toLowerCase() !== 'false';
 const SELF_HEAL_RESTART_DELAY_MS = toInt(process.env.SELF_HEAL_RESTART_DELAY_MS, 5000);
@@ -279,6 +298,10 @@ function bindClientHandlers(bot) {
   bot.on('interactionCreate', handleInteractionCreate);
 
   bot.on('error', (err) => {
+    if (isIgnorableDiscordRuntimeError(err)) {
+      console.warn(`Ignoring non-fatal Discord client error: ${safeError(err)}`);
+      return;
+    }
     console.error('Discord client error:', err);
     scheduleSelfHeal('client_error', err);
   });
@@ -385,6 +408,10 @@ const slashCommands = [
     .setDescription('设置当前频道 codex timeout（ms/off/status）')
     .addStringOption(o => o.setName('value').setDescription('如 60000 / off / status').setRequired(true)),
   new SlashCommandBuilder()
+    .setName(slashName('process_lines'))
+    .setDescription('设置过程内容窗口行数（1-5 或 status）')
+    .addStringOption(o => o.setName('value').setDescription('如 2 / 3 / 5 / status').setRequired(true)),
+  new SlashCommandBuilder()
     .setName(slashName('progress'))
     .setDescription('查看当前任务的最新执行进度'),
   new SlashCommandBuilder()
@@ -424,10 +451,7 @@ async function handleInteractionCreate(interaction) {
       }
       await handleOnboardingButtonInteraction(interaction);
     } catch (err) {
-      const reply = interaction.replied || interaction.deferred
-        ? interaction.followUp.bind(interaction)
-        : interaction.reply.bind(interaction);
-      await reply({ content: `❌ ${safeError(err)}`, flags: 64 });
+      await safeInteractionFailureReply(interaction, err);
     }
     return;
   }
@@ -438,23 +462,27 @@ async function handleInteractionCreate(interaction) {
     return;
   }
 
-  if (!(await isAllowedInteractionChannel(interaction))) {
-    await interaction.reply({ content: '⛔ 当前频道未开放。', flags: 64 });
-    return;
-  }
-
-  const key = interaction.channelId;
-  if (!key) {
-    await interaction.reply({ content: '❌ 无法识别当前频道。', flags: 64 });
-    return;
-  }
-  const session = getSession(key);
-  const cmd = normalizeSlashCommandName(interaction.commandName);
-
   try {
+    // ACK early to avoid Discord 3-second interaction timeout under transient latency.
+    await interaction.deferReply({ flags: 64 });
+    const respond = (payload) => sendInteractionResponse(interaction, payload);
+
+    if (!(await isAllowedInteractionChannel(interaction))) {
+      await respond({ content: '⛔ 当前频道未开放。', flags: 64 });
+      return;
+    }
+
+    const key = interaction.channelId;
+    if (!key) {
+      await respond({ content: '❌ 无法识别当前频道。', flags: 64 });
+      return;
+    }
+    const session = getSession(key);
+    const cmd = normalizeSlashCommandName(interaction.commandName);
+
     switch (cmd) {
       case 'status': {
-        await interaction.reply({
+        await respond({
           content: formatStatusReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -465,7 +493,7 @@ async function handleInteractionCreate(interaction) {
         session.codexThreadId = null;
         session.configOverrides = [];
         saveDb();
-        await interaction.reply('♻️ 会话已清空，下条消息新开上下文。');
+        await respond('♻️ 会话已清空，下条消息新开上下文。');
         break;
       }
 
@@ -473,17 +501,17 @@ async function handleInteractionCreate(interaction) {
         try {
           const sessions = listRecentCodexSessions(10);
           if (!sessions.length) {
-            await interaction.reply({ content: '没有找到任何 Codex session。', flags: 64 });
+            await respond({ content: '没有找到任何 Codex session。', flags: 64 });
             break;
           }
 
           const lines = sessions.map((s, i) => `${i + 1}. \`${s.id}\` (${humanAge(Date.now() - s.mtime)} ago)`);
-          await interaction.reply({
+          await respond({
             content: [`**最近 Sessions**（用 \`${slashRef('resume')}\` 继承）`, ...lines].join('\n'),
             flags: 64,
           });
         } catch (err) {
-          await interaction.reply({ content: `❌ ${safeError(err)}`, flags: 64 });
+          await respond({ content: `❌ ${safeError(err)}`, flags: 64 });
         }
         break;
       }
@@ -492,14 +520,14 @@ async function handleInteractionCreate(interaction) {
         const p = interaction.options.getString('path');
         const resolved = resolvePath(p);
         if (!fs.existsSync(resolved)) {
-          await interaction.reply({ content: `❌ 目录不存在：\`${resolved}\``, flags: 64 });
+          await respond({ content: `❌ 目录不存在：\`${resolved}\``, flags: 64 });
           break;
         }
         ensureGitRepo(resolved);
         session.workspaceDir = resolved;
         session.codexThreadId = null;
         saveDb();
-        await interaction.reply(`✅ workspace → \`${resolved}\`（会话已重置）`);
+        await respond(`✅ workspace → \`${resolved}\`（会话已重置）`);
         break;
       }
 
@@ -507,7 +535,7 @@ async function handleInteractionCreate(interaction) {
         const name = interaction.options.getString('name');
         session.model = name.toLowerCase() === 'default' ? null : name;
         saveDb();
-        await interaction.reply(`✅ model = ${session.model || '(default)'}`);
+        await respond(`✅ model = ${session.model || '(default)'}`);
         break;
       }
 
@@ -515,7 +543,7 @@ async function handleInteractionCreate(interaction) {
         const level = interaction.options.getString('level');
         session.effort = level === 'default' ? null : level;
         saveDb();
-        await interaction.reply(`✅ effort = ${session.effort || '(default)'}`);
+        await respond(`✅ effort = ${session.effort || '(default)'}`);
         break;
       }
 
@@ -523,7 +551,7 @@ async function handleInteractionCreate(interaction) {
         const type = interaction.options.getString('type');
         session.mode = type;
         saveDb();
-        await interaction.reply(`✅ mode = ${session.mode}`);
+        await respond(`✅ mode = ${session.mode}`);
         break;
       }
 
@@ -531,7 +559,7 @@ async function handleInteractionCreate(interaction) {
         const sid = interaction.options.getString('session_id');
         session.codexThreadId = sid.trim();
         saveDb();
-        await interaction.reply(`✅ 已绑定 session: \`${session.codexThreadId}\``);
+        await respond(`✅ 已绑定 session: \`${session.codexThreadId}\``);
         break;
       }
 
@@ -539,12 +567,12 @@ async function handleInteractionCreate(interaction) {
         const label = interaction.options.getString('label').trim();
         session.name = label;
         saveDb();
-        await interaction.reply(`✅ session 命名为: **${label}**`);
+        await respond(`✅ session 命名为: **${label}**`);
         break;
       }
 
       case 'queue': {
-        await interaction.reply({
+        await respond({
           content: formatQueueReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -552,7 +580,7 @@ async function handleInteractionCreate(interaction) {
       }
 
       case 'doctor': {
-        await interaction.reply({
+        await respond({
           content: formatDoctorReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -562,14 +590,14 @@ async function handleInteractionCreate(interaction) {
       case 'onboarding': {
         const language = getSessionLanguage(session);
         if (!isOnboardingEnabled(session)) {
-          await interaction.reply({
+          await respond({
             content: formatOnboardingDisabledMessage(language),
             flags: 64,
           });
           break;
         }
         const step = 1;
-        await interaction.reply({
+        await respond({
           content: formatOnboardingStepReport(step, key, session, interaction.channel, language),
           components: buildOnboardingActionRows(step, interaction.user.id, session, language),
           flags: 64,
@@ -583,13 +611,13 @@ async function handleInteractionCreate(interaction) {
         if (action === 'on' || action === 'off') {
           session.onboardingEnabled = action === 'on';
           saveDb();
-          await interaction.reply({
+          await respond({
             content: formatOnboardingConfigReport(language, session.onboardingEnabled, true),
             flags: 64,
           });
           break;
         }
-        await interaction.reply({
+        await respond({
           content: formatOnboardingConfigReport(language, isOnboardingEnabled(session), false),
           flags: 64,
         });
@@ -601,7 +629,7 @@ async function handleInteractionCreate(interaction) {
         const language = parseUiLanguageInput(requested) || DEFAULT_UI_LANGUAGE;
         session.language = language;
         saveDb();
-        await interaction.reply({
+        await respond({
           content: formatLanguageConfigReport(language, true),
           flags: 64,
         });
@@ -611,7 +639,7 @@ async function handleInteractionCreate(interaction) {
       case 'profile': {
         const requested = interaction.options.getString('name');
         if (String(requested || '').toLowerCase() === 'status') {
-          await interaction.reply({
+          await respond({
             content: formatProfileConfigReport(getSessionLanguage(session), getEffectiveSecurityProfile(session).profile, false),
             flags: 64,
           });
@@ -619,7 +647,7 @@ async function handleInteractionCreate(interaction) {
         }
         const profile = parseSecurityProfileInput(requested);
         if (!profile) {
-          await interaction.reply({
+          await respond({
             content: formatProfileConfigHelp(getSessionLanguage(session)),
             flags: 64,
           });
@@ -627,7 +655,7 @@ async function handleInteractionCreate(interaction) {
         }
         session.securityProfile = profile;
         saveDb();
-        await interaction.reply({
+        await respond({
           content: formatProfileConfigReport(getSessionLanguage(session), profile, true),
           flags: 64,
         });
@@ -638,14 +666,14 @@ async function handleInteractionCreate(interaction) {
         const language = getSessionLanguage(session);
         const parsedTimeout = parseTimeoutConfigAction(interaction.options.getString('value'));
         if (!parsedTimeout || parsedTimeout.type === 'invalid') {
-          await interaction.reply({
+          await respond({
             content: formatTimeoutConfigHelp(language),
             flags: 64,
           });
           break;
         }
         if (parsedTimeout.type === 'status') {
-          await interaction.reply({
+          await respond({
             content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), false),
             flags: 64,
           });
@@ -653,15 +681,41 @@ async function handleInteractionCreate(interaction) {
         }
         session.timeoutMs = parsedTimeout.timeoutMs;
         saveDb();
-        await interaction.reply({
+        await respond({
           content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true),
           flags: 64,
         });
         break;
       }
 
+      case 'process_lines': {
+        const language = getSessionLanguage(session);
+        const parsed = parseProcessLinesConfigAction(interaction.options.getString('value'));
+        if (!parsed || parsed.type === 'invalid') {
+          await respond({
+            content: formatProcessLinesConfigHelp(language),
+            flags: 64,
+          });
+          break;
+        }
+        if (parsed.type === 'status') {
+          await respond({
+            content: formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), false),
+            flags: 64,
+          });
+          break;
+        }
+        session.processLines = parsed.lines;
+        saveDb();
+        await respond({
+          content: formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), true),
+          flags: 64,
+        });
+        break;
+      }
+
       case 'progress': {
-        await interaction.reply({
+        await respond({
           content: formatProgressReport(key, session, interaction.channel),
           flags: 64,
         });
@@ -670,18 +724,49 @@ async function handleInteractionCreate(interaction) {
 
       case 'cancel': {
         const outcome = cancelChannelWork(key, 'slash_cancel');
-        await interaction.reply({
+        await respond({
           content: formatCancelReport(outcome),
           flags: 64,
         });
         break;
       }
+
+      default: {
+        await respond({ content: `❌ 未知命令：\`${interaction.commandName}\``, flags: 64 });
+        break;
+      }
     }
   } catch (err) {
-    const reply = interaction.replied || interaction.deferred
-      ? interaction.followUp.bind(interaction)
-      : interaction.reply.bind(interaction);
-    await reply({ content: `❌ ${safeError(err)}`, flags: 64 });
+    await safeInteractionFailureReply(interaction, err);
+  }
+}
+
+async function sendInteractionResponse(interaction, payload) {
+  const body = typeof payload === 'string' ? { content: payload } : payload;
+  if (interaction.deferred && !interaction.replied) {
+    const { flags: _ignoredFlags, ...editPayload } = body;
+    return interaction.editReply(editPayload);
+  }
+  if (interaction.replied) {
+    return interaction.followUp(body);
+  }
+  return interaction.reply(body);
+}
+
+async function safeInteractionFailureReply(interaction, err) {
+  if (isIgnorableDiscordRuntimeError(err)) {
+    console.warn(`Ignoring non-fatal interaction error: ${safeError(err)}`);
+    return;
+  }
+
+  try {
+    await sendInteractionResponse(interaction, { content: `❌ ${safeError(err)}`, flags: 64 });
+  } catch (replyErr) {
+    if (isIgnorableDiscordRuntimeError(replyErr)) {
+      console.warn(`Ignoring non-fatal interaction reply error: ${safeError(replyErr)}`);
+      return;
+    }
+    throw replyErr;
   }
 }
 
@@ -780,12 +865,20 @@ function setupProcessSelfHeal() {
 
   process.on('unhandledRejection', (reason) => {
     const err = reason instanceof Error ? reason : new Error(String(reason));
+    if (isIgnorableDiscordRuntimeError(err)) {
+      console.warn(`Ignoring non-fatal unhandled rejection: ${safeError(err)}`);
+      return;
+    }
     console.error('Unhandled rejection:', err);
     if (isInvalidTokenError(err)) return;
     scheduleSelfHeal('unhandled_rejection', err);
   });
 
   process.on('uncaughtException', (err) => {
+    if (isIgnorableDiscordRuntimeError(err)) {
+      console.warn(`Ignoring non-fatal uncaught exception: ${safeError(err)}`);
+      return;
+    }
     console.error('Uncaught exception:', err);
     if (isInvalidTokenError(err)) return;
     scheduleSelfHeal('uncaught_exception', err);
@@ -804,6 +897,14 @@ function isRecoverableGatewayCloseCode(code) {
 function isInvalidTokenError(err) {
   const msg = String(err?.message || err || '').toLowerCase();
   return msg.includes('invalid token');
+}
+
+function isIgnorableDiscordRuntimeError(err) {
+  const code = Number(err?.code);
+  if (code === 10062 || code === 40060) return true;
+
+  const msg = String(err?.message || err || '').toLowerCase();
+  return msg.includes('unknown interaction') || msg.includes('interaction has already been acknowledged');
 }
 
 function sleep(ms) {
@@ -1012,6 +1113,25 @@ async function handleCommand(message, key, content) {
       session.timeoutMs = parsedTimeout.timeoutMs;
       saveDb();
       await safeReply(message, formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true));
+      break;
+    }
+
+    case '!processlines':
+    case '!progresslines':
+    case '!plines': {
+      const language = getSessionLanguage(session);
+      const parsed = parseProcessLinesConfigAction(arg || 'status');
+      if (!parsed || parsed.type === 'invalid') {
+        await safeReply(message, formatProcessLinesConfigHelp(language));
+        break;
+      }
+      if (parsed.type === 'status') {
+        await safeReply(message, formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), false));
+        break;
+      }
+      session.processLines = parsed.lines;
+      saveDb();
+      await safeReply(message, formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), true));
       break;
     }
 
@@ -1380,6 +1500,22 @@ function localizeProgressLines(lines, language = 'en') {
   return lines.map((line) => localizeProgressLine(line, language));
 }
 
+function renderProcessContentLines(activities, language = 'en', count = PROGRESS_PROCESS_LINES) {
+  const limit = Math.max(1, Math.min(5, Number(count || PROGRESS_PROCESS_LINES)));
+  const visible = Array.isArray(activities)
+    ? activities
+      .slice(-limit)
+      .map((line) => String(line || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean)
+    : [];
+  if (!visible.length) return [];
+  const title = language === 'en' ? '• process content:' : '• 过程内容：';
+  return [
+    title,
+    ...visible.map((line) => `  · ${line}`),
+  ];
+}
+
 function formatRuntimeLabel(runtime, language = 'en') {
   if (!runtime.running) return language === 'en' ? 'idle' : '空闲';
   const age = runtime.activeSinceMs === null ? (language === 'en' ? 'just-now' : '刚刚') : humanAge(runtime.activeSinceMs);
@@ -1409,6 +1545,7 @@ function formatStatusReport(key, session, channel = null) {
   const security = resolveSecurityContext(channel, session);
   const language = getSessionLanguage(session);
   const timeoutSetting = resolveTimeoutSetting(session);
+  const processLinesSetting = resolveProcessLinesSetting(session);
   const securitySetting = getEffectiveSecurityProfile(session);
   const modeDesc = session.mode === 'dangerous'
     ? 'dangerous (无沙盒, 全权限)'
@@ -1419,6 +1556,7 @@ function formatStatusReport(key, session, channel = null) {
     latestStep: runtime.progressText,
     maxSteps: 3,
   });
+  const processLines = renderProcessContentLines(runtime.recentActivities, normalizeUiLanguage(language), processLinesSetting.lines);
 
   return [
     '🧭 **当前配置**',
@@ -1436,7 +1574,7 @@ function formatStatusReport(key, session, channel = null) {
     `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
     `• progress events: ${runtime.progressEvents}`,
     runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
-    ...renderRecentActivitiesLines(runtime.recentActivities, Math.min(PROGRESS_ACTIVITY_MAX_LINES, 4)),
+    ...processLines,
     planSummary ? `• plan: ${planSummary}` : null,
     completedSummary ? `• completed milestones: ${completedSummary}` : null,
     runtime.progressAgoMs !== null ? `• progress updated: ${humanAge(runtime.progressAgoMs)} ago` : null,
@@ -1450,6 +1588,7 @@ function formatStatusReport(key, session, channel = null) {
     `• !config: ${formatConfigCommandStatus()}`,
     `• config allowlist: ${describeConfigPolicy()}`,
     `• codex timeout: ${formatTimeoutLabel(timeoutSetting.timeoutMs)} (${timeoutSetting.source})`,
+    `• process window: ${processLinesSetting.lines} lines (${processLinesSetting.source})`,
     `• compact strategy: ${describeCompactStrategy(COMPACT_STRATEGY)}`,
     `• compact trigger: ${COMPACT_ON_THRESHOLD ? 'on' : 'off'}`,
     `• compact threshold: ${MAX_INPUT_TOKENS_BEFORE_COMPACT}`,
@@ -1465,19 +1604,21 @@ function formatStatusReport(key, session, channel = null) {
 function formatQueueReport(key, session = null, channel = null) {
   const runtime = getRuntimeSnapshot(key);
   const security = resolveSecurityContext(channel, session);
+  const processLinesSetting = resolveProcessLinesSetting(session);
   const planSummary = formatProgressPlanSummary(runtime.progressPlan);
   const completedSummary = formatCompletedStepsSummary(runtime.completedSteps, {
     planState: runtime.progressPlan,
     latestStep: runtime.progressText,
     maxSteps: 3,
   });
+  const processLines = renderProcessContentLines(runtime.recentActivities, 'en', processLinesSetting.lines);
   return [
     '📮 **任务队列状态**',
     `• runtime: ${formatRuntimeLabel(runtime)}`,
     `• queued prompts: ${runtime.queued}`,
     `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
     runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
-    ...renderRecentActivitiesLines(runtime.recentActivities, Math.min(PROGRESS_ACTIVITY_MAX_LINES, 3)),
+    ...processLines,
     planSummary ? `• plan: ${planSummary}` : null,
     completedSummary ? `• completed milestones: ${completedSummary}` : null,
     runtime.progressAgoMs !== null ? `• progress updated: ${humanAge(runtime.progressAgoMs)} ago` : null,
@@ -1491,6 +1632,7 @@ function formatProgressReport(key, session = null, channel = null) {
   const security = resolveSecurityContext(channel, session);
   const language = getSessionLanguage(session);
   const lang = normalizeUiLanguage(language);
+  const processLinesSetting = resolveProcessLinesSetting(session);
   if (!runtime.running) {
     if (lang === 'en') {
       return [
@@ -1507,7 +1649,7 @@ function formatProgressReport(key, session = null, channel = null) {
       `• 提示: 发送新任务后可用 \`!progress\` / \`${slashRef('progress')}\` 查看实时进度。`,
     ].join('\n');
   }
-  const recentLines = localizeProgressLines(renderRecentActivitiesLines(runtime.recentActivities, PROGRESS_ACTIVITY_MAX_LINES), lang);
+  const processLines = renderProcessContentLines(runtime.recentActivities, lang, processLinesSetting.lines);
   const planLines = localizeProgressLines(renderProgressPlanLines(runtime.progressPlan, PROGRESS_PLAN_MAX_LINES), lang);
   const completedLines = localizeProgressLines(renderCompletedStepsLines(runtime.completedSteps, {
     planState: runtime.progressPlan,
@@ -1520,7 +1662,7 @@ function formatProgressReport(key, session = null, channel = null) {
       `• runtime: ${formatRuntimeLabel(runtime, lang)}`,
       `• event count: ${runtime.progressEvents}`,
       runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
-      ...recentLines,
+      ...processLines,
       ...planLines,
       ...completedLines,
       runtime.progressAgoMs !== null ? `• last update: ${humanAge(runtime.progressAgoMs)} ago` : null,
@@ -1536,7 +1678,7 @@ function formatProgressReport(key, session = null, channel = null) {
     `• 运行状态: ${formatRuntimeLabel(runtime, lang)}`,
     `• 事件数: ${runtime.progressEvents}`,
     runtime.progressText ? `• 最新活动: ${runtime.progressText}` : null,
-    ...recentLines,
+    ...processLines,
     ...planLines,
     ...completedLines,
     runtime.progressAgoMs !== null ? `• 上次更新: ${humanAge(runtime.progressAgoMs)}前` : null,
@@ -1643,6 +1785,23 @@ function resolveTimeoutSetting(session) {
   return { timeoutMs: CODEX_TIMEOUT_MS, source: 'env default' };
 }
 
+function normalizeSessionProcessLines(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const rounded = Math.floor(n);
+  if (rounded < 1 || rounded > 5) return null;
+  return rounded;
+}
+
+function resolveProcessLinesSetting(session) {
+  const sessionLines = normalizeSessionProcessLines(session?.processLines);
+  if (sessionLines !== null) {
+    return { lines: sessionLines, source: 'session override' };
+  }
+  return { lines: PROGRESS_PROCESS_LINES, source: 'default' };
+}
+
 function parseTimeoutConfigAction(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
@@ -1653,6 +1812,16 @@ function parseTimeoutConfigAction(value) {
   if (!/^\d+$/.test(raw)) return { type: 'invalid' };
   const timeoutMs = normalizeTimeoutMs(Number(raw), 0);
   return { type: 'set', timeoutMs };
+}
+
+function parseProcessLinesConfigAction(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return null;
+  if (['status', 'show', 'state', '查看', '状态'].includes(raw)) return { type: 'status' };
+  if (!/^\d+$/.test(raw)) return { type: 'invalid' };
+  const lines = normalizeSessionProcessLines(Number(raw));
+  if (lines === null) return { type: 'invalid' };
+  return { type: 'set', lines };
 }
 
 function isOnboardingEnabled(session) {
@@ -1751,6 +1920,33 @@ function formatTimeoutConfigReport(language, timeoutSetting, changed) {
     : `ℹ️ 当前 Codex 超时为 ${label}`;
 }
 
+function formatProcessLinesConfigHelp(language) {
+  if (language === 'en') {
+    return [
+      'Usage: `!processlines <1|2|3|4|5|status>`',
+      `Slash: \`${slashRef('process_lines')} <1-5|status>\``,
+      'Examples: `!processlines 2`, `!processlines status`',
+    ].join('\n');
+  }
+  return [
+    '用法：`!processlines <1|2|3|4|5|status>`',
+    `Slash：\`${slashRef('process_lines')} <1-5|status>\``,
+    '示例：`!processlines 2`、`!processlines status`',
+  ].join('\n');
+}
+
+function formatProcessLinesConfigReport(language, setting, changed) {
+  const label = `${setting.lines} (${setting.source})`;
+  if (language === 'en') {
+    return changed
+      ? `✅ Process content window set to ${label}`
+      : `ℹ️ Process content window is ${label}`;
+  }
+  return changed
+    ? `✅ 过程内容窗口已设置为 ${label}`
+    : `ℹ️ 当前过程内容窗口为 ${label}`;
+}
+
 function formatOnboardingDisabledMessage(language) {
   if (language === 'en') {
     return [
@@ -1807,6 +2003,7 @@ function formatHelpReport(session) {
       `• \`${slashRef('language')} <中文|English>\` / \`!lang <zh|en>\` — message language`,
       `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — channel security profile`,
       `• \`${slashRef('timeout')} <ms|off|status>\` / \`!timeout <...>\` — codex timeout`,
+      `• \`${slashRef('process_lines')} <1-5|status>\` / \`!processlines <...>\` — process content window lines`,
       '• `!progress` — current run progress',
       '• `!abort` / `!cancel` / `!stop` — stop running task and clear queue',
       '• `!reset` — clear session context',
@@ -1839,6 +2036,7 @@ function formatHelpReport(session) {
     `• \`${slashRef('language')} <中文|English>\` / \`!lang <zh|en>\` — 消息提示语言`,
     `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — 当前频道 security profile`,
     `• \`${slashRef('timeout')} <毫秒|off|status>\` / \`!timeout <...>\` — Codex 超时`,
+    `• \`${slashRef('process_lines')} <1-5|status>\` / \`!processlines <...>\` — 过程内容窗口行数`,
     '• `!progress` — 查看当前任务的最新进度',
     '• `!abort` / `!cancel` / `!stop` — 中断当前任务并清空队列',
     '• `!reset` — 清空会话，下条消息新开上下文',
@@ -2295,11 +2493,17 @@ async function handleOnboardingButtonInteraction(interaction) {
   });
 }
 
-function createProgressReporter({ message, channelState, language = DEFAULT_UI_LANGUAGE }) {
+function createProgressReporter({
+  message,
+  channelState,
+  language = DEFAULT_UI_LANGUAGE,
+  processLines = PROGRESS_PROCESS_LINES,
+}) {
   if (!PROGRESS_UPDATES_ENABLED) return null;
 
   const startedAt = Date.now();
   const lang = normalizeUiLanguage(language);
+  const processLineLimit = Math.max(1, Math.min(5, Number(processLines || PROGRESS_PROCESS_LINES)));
   let progressMessage = null;
   let timer = null;
   let stopped = false;
@@ -2316,8 +2520,15 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
   const recentActivities = Array.isArray(channelState.activeRun?.recentActivities)
     ? [...channelState.activeRun.recentActivities]
     : [];
+  const pendingActivities = [];
+  let lastActivityPushAt = 0;
   let isEmitting = false;
   let rerunEmit = false;
+  let activityTimer = null;
+  const isDuplicateProgressEvent = createProgressEventDeduper({
+    ttlMs: PROGRESS_EVENT_DEDUPE_WINDOW_MS,
+    maxKeys: 700,
+  });
 
   const syncActiveRun = () => {
     if (!channelState.activeRun) return;
@@ -2351,7 +2562,7 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       `${lang === 'en' ? '• phase' : '• 阶段'}: ${phase}`,
       `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
       `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
-      ...localizeProgressLines(renderRecentActivitiesLines(recentActivities, PROGRESS_ACTIVITY_MAX_LINES), lang),
+      ...renderProcessContentLines(recentActivities, lang, processLineLimit),
       ...localizeProgressLines(renderProgressPlanLines(planState, PROGRESS_PLAN_MAX_LINES), lang),
       ...localizeProgressLines(renderCompletedStepsLines(completedSteps, {
         planState,
@@ -2395,6 +2606,36 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
     }
   };
 
+  const normalizeActivityKey = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+  const enqueueActivity = (activityText) => {
+    const text = String(activityText || '').replace(/\s+/g, ' ').trim();
+    if (!text) return;
+    const key = normalizeActivityKey(text);
+    if (!key) return;
+
+    const latestVisible = normalizeActivityKey(recentActivities[recentActivities.length - 1]);
+    if (latestVisible && latestVisible === key) return;
+    const latestQueued = normalizeActivityKey(pendingActivities[pendingActivities.length - 1]);
+    if (latestQueued && latestQueued === key) return;
+
+    pendingActivities.push(text);
+    if (pendingActivities.length > 80) {
+      pendingActivities.splice(0, pendingActivities.length - 80);
+    }
+  };
+
+  const pushOneActivity = ({ force = false } = {}) => {
+    if (!pendingActivities.length) return false;
+    const now = Date.now();
+    if (!force && now - lastActivityPushAt < PROGRESS_PROCESS_PUSH_INTERVAL_MS) return false;
+    const next = pendingActivities.shift();
+    if (!next) return false;
+    appendRecentActivity(recentActivities, next);
+    lastActivityPushAt = now;
+    return true;
+  };
+
   const start = async () => {
     try {
       const body = render('running');
@@ -2406,6 +2647,13 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
         void emit(true);
       }, PROGRESS_UPDATE_INTERVAL_MS);
       timer.unref?.();
+      activityTimer = setInterval(() => {
+        if (stopped) return;
+        if (!pushOneActivity()) return;
+        syncActiveRun();
+        void emit(false);
+      }, PROGRESS_PROCESS_PUSH_INTERVAL_MS);
+      activityTimer.unref?.();
     } catch {
       progressMessage = null;
     }
@@ -2413,10 +2661,33 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
 
   const onEvent = (ev) => {
     if (stopped) return;
-    events += 1;
-    latestStep = summarizeCodexEvent(ev);
-    appendRecentActivity(recentActivities, latestStep);
+    const summaryStep = summarizeCodexEvent(ev);
+    const rawActivity = extractRawProgressTextFromEvent(ev);
     const nextPlan = extractPlanStateFromEvent(ev);
+    const completedStep = extractCompletedStepFromEvent(ev);
+    const dedupeKey = buildProgressEventDedupeKey({
+      summaryStep,
+      rawActivity,
+      completedStep,
+      planSummary: formatProgressPlanSummary(nextPlan),
+    });
+    if (isDuplicateProgressEvent(dedupeKey)) return;
+
+    events += 1;
+    if (summaryStep && !summaryStep.startsWith('agent message')) {
+      latestStep = summaryStep;
+    } else if (!latestStep) {
+      latestStep = summaryStep;
+    }
+    if (rawActivity) {
+      enqueueActivity(rawActivity);
+      // First visible line should appear quickly, then continue as a rolling queue.
+      if (recentActivities.length === 0) {
+        pushOneActivity({ force: true });
+      } else {
+        pushOneActivity();
+      }
+    }
     if (nextPlan) {
       planState = nextPlan;
       for (const item of nextPlan.steps) {
@@ -2425,7 +2696,6 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
         }
       }
     }
-    const completedStep = extractCompletedStepFromEvent(ev);
     if (completedStep) appendCompletedStep(completedSteps, completedStep);
     syncActiveRun();
     void emit(false);
@@ -2440,7 +2710,6 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       ? source
       : (source === 'stderr' ? '标准错误' : '标准输出');
     latestStep = `${sourceLabel}: ${truncate(String(line || '').replace(/\s+/g, ' ').trim(), PROGRESS_TEXT_PREVIEW_CHARS)}`;
-    appendRecentActivity(recentActivities, latestStep);
     syncActiveRun();
     void emit(false);
   };
@@ -2449,6 +2718,10 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
     if (stopped) return;
     stopped = true;
     if (timer) clearInterval(timer);
+    if (activityTimer) clearInterval(activityTimer);
+    while (pushOneActivity({ force: true })) {
+      // Drain any buffered progress lines so final card shows the latest context window.
+    }
     syncActiveRun();
     if (!progressMessage) return;
 
@@ -2466,7 +2739,7 @@ function createProgressReporter({ message, channelState, language = DEFAULT_UI_L
       `${lang === 'en' ? '• phase' : '• 阶段'}: ${formatRuntimePhaseLabel(channelState.activeRun?.phase || 'done', lang)}`,
       `${lang === 'en' ? '• event count' : '• 事件数'}: ${events}`,
       `${lang === 'en' ? '• latest activity' : '• 最新活动'}: ${latestStep}`,
-      ...localizeProgressLines(renderRecentActivitiesLines(recentActivities, PROGRESS_ACTIVITY_MAX_LINES), lang),
+      ...renderProcessContentLines(recentActivities, lang, processLineLimit),
       ...localizeProgressLines(renderProgressPlanLines(planState, PROGRESS_PLAN_MAX_LINES), lang),
       ...localizeProgressLines(renderCompletedStepsLines(completedSteps, {
         planState,
@@ -2501,6 +2774,10 @@ function summarizeCodexEvent(ev) {
   });
 }
 
+function extractRawProgressTextFromEvent(ev) {
+  return extractRawProgressTextFromEventBase(ev);
+}
+
 function cloneProgressPlan(planState) {
   return cloneProgressPlanBase(planState, {
     previewChars: PROGRESS_TEXT_PREVIEW_CHARS,
@@ -2529,7 +2806,9 @@ function appendCompletedStep(list, stepText) {
 function appendRecentActivity(list, activityText) {
   appendRecentActivityBase(list, activityText, {
     previewChars: PROGRESS_TEXT_PREVIEW_CHARS,
-    maxSteps: PROGRESS_ACTIVITY_MAX_LINES,
+    maxSteps: 5,
+    truncateText: false,
+    preserveWhitespace: true,
   });
 }
 
@@ -2579,6 +2858,7 @@ async function handlePrompt(message, key, prompt, channelState) {
     message,
     channelState,
     language: getSessionLanguage(session),
+    processLines: resolveProcessLinesSetting(session).lines,
   });
   await progress?.start();
   let progressOutcome = { ok: false, cancelled: false, timedOut: false, error: '' };
@@ -2712,7 +2992,10 @@ async function handlePrompt(message, key, prompt, channelState) {
 
     await safeReply(message, parts[0]);
     for (let i = 1; i < parts.length; i++) {
-      await message.channel.send(parts[i]);
+      await withDiscordNetworkRetry(
+        () => message.channel.send(parts[i]),
+        { logger: console, label: 'channel.send (result part)' },
+      );
     }
 
     progressOutcome = { ok: true, cancelled: false, timedOut: false, error: '' };
@@ -2803,6 +3086,7 @@ async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, 
     exitCode,
     signal,
     messages,
+    finalAnswerMessages,
     reasonings,
     usage,
     threadId,
@@ -2823,6 +3107,7 @@ async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, 
     exitCode,
     signal,
     messages,
+    finalAnswerMessages,
     reasonings,
     usage,
     threadId,
@@ -2871,12 +3156,15 @@ function spawnCodex(args, cwd, options = {}) {
     let stderrBuf = '';
 
     const messages = [];
+    const finalAnswerMessages = [];
     const reasonings = [];
     const logs = [];
     let usage = null;
     let threadId = null;
     let resolved = false;
     let timedOut = false;
+    let progressBridgeThreadId = null;
+    let stopSessionProgressBridge = null;
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs, CODEX_TIMEOUT_MS);
     const timeout = timeoutMs > 0
       ? setTimeout(() => {
@@ -2885,6 +3173,32 @@ function spawnCodex(args, cwd, options = {}) {
         stopChildProcess(child);
       }, timeoutMs)
       : null;
+
+    const stopBridges = () => {
+      if (typeof stopSessionProgressBridge === 'function') {
+        try {
+          stopSessionProgressBridge();
+        } catch {
+          // ignore bridge teardown failures
+        }
+      }
+      stopSessionProgressBridge = null;
+      progressBridgeThreadId = null;
+    };
+
+    const ensureSessionProgressBridge = (nextThreadId) => {
+      const id = String(nextThreadId || '').trim();
+      if (!id) return;
+      if (typeof options.onEvent !== 'function') return;
+      if (id === progressBridgeThreadId && typeof stopSessionProgressBridge === 'function') return;
+
+      stopBridges();
+      stopSessionProgressBridge = startCodexSessionProgressBridge({
+        threadId: id,
+        onEvent: options.onEvent,
+      });
+      progressBridgeThreadId = id;
+    };
 
     const consumeLine = (line, source) => {
       const trimmed = line.trim();
@@ -2929,10 +3243,19 @@ function spawnCodex(args, cwd, options = {}) {
       switch (ev.type) {
         case 'thread.started':
           threadId = ev.thread_id || threadId;
+          ensureSessionProgressBridge(threadId);
           break;
         case 'item.completed': {
           const item = ev.item || {};
-          if (item.type === 'agent_message' && item.text) messages.push(item.text.trim());
+          if (item.type === 'agent_message') {
+            const text = extractAgentMessageText(item);
+            if (text) {
+              messages.push(text);
+              if (isFinalAnswerLikeAgentMessage(item)) {
+                finalAnswerMessages.push(text);
+              }
+            }
+          }
           if (item.type === 'reasoning' && item.text) reasonings.push(item.text.trim());
           break;
         }
@@ -2954,6 +3277,7 @@ function spawnCodex(args, cwd, options = {}) {
       if (resolved) return;
       resolved = true;
       if (timeout) clearTimeout(timeout);
+      stopBridges();
       if (err?.code === 'ENOENT') {
         logs.push(`Command not found: ${CODEX_BIN}`);
       }
@@ -2962,6 +3286,7 @@ function spawnCodex(args, cwd, options = {}) {
         exitCode: null,
         signal: null,
         messages,
+        finalAnswerMessages,
         reasonings,
         usage,
         threadId,
@@ -2976,6 +3301,7 @@ function spawnCodex(args, cwd, options = {}) {
       if (resolved) return;
       resolved = true;
       if (timeout) clearTimeout(timeout);
+      stopBridges();
       flushRemainders();
 
       const ok = exitCode === 0;
@@ -2993,6 +3319,7 @@ function spawnCodex(args, cwd, options = {}) {
         exitCode,
         signal,
         messages,
+        finalAnswerMessages,
         reasonings,
         usage,
         threadId,
@@ -3005,6 +3332,141 @@ function spawnCodex(args, cwd, options = {}) {
   });
 }
 
+function startCodexSessionProgressBridge({ threadId, onEvent }) {
+  const sessionId = String(threadId || '').trim();
+  if (!sessionId || typeof onEvent !== 'function') return () => {};
+
+  const sessionsDir = getCodexSessionsDir();
+  if (!sessionsDir || !fs.existsSync(sessionsDir)) return () => {};
+
+  const bridgeStartedAtMs = Date.now();
+  const minMtimeMs = bridgeStartedAtMs - 2 * 60 * 1000;
+  const dedupeKeys = [];
+  const dedupeSet = new Set();
+
+  let stopped = false;
+  let rolloutFile = null;
+  let rolloutFileMtimeMs = 0;
+  let offset = 0;
+  let remainder = '';
+  let pollTimer = null;
+  let lastScanAt = 0;
+
+  const rememberKey = (key) => {
+    if (!key || dedupeSet.has(key)) return false;
+    dedupeSet.add(key);
+    dedupeKeys.push(key);
+    if (dedupeKeys.length > 500) {
+      const stale = dedupeKeys.shift();
+      if (stale) dedupeSet.delete(stale);
+    }
+    return true;
+  };
+
+  const handleSessionLine = (line) => {
+    const raw = String(line || '').trim();
+    if (!raw || !raw.startsWith('{') || !raw.endsWith('}')) return;
+
+    let ev = null;
+    try {
+      ev = JSON.parse(raw);
+    } catch {
+      return;
+    }
+    if (!ev || typeof ev !== 'object') return;
+
+    const text = extractRawProgressTextFromEventBase(ev);
+    if (!text) return;
+    const key = [
+      ev.timestamp || '',
+      ev.type || '',
+      ev.payload?.type || '',
+      ev.payload?.phase || '',
+      text,
+    ].join('|');
+    if (!rememberKey(key)) return;
+    onEvent(ev);
+  };
+
+  const consumeChunk = (chunk) => {
+    if (!chunk) return;
+    remainder += chunk;
+    const lines = remainder.split('\n');
+    remainder = lines.pop() ?? '';
+    for (const line of lines) handleSessionLine(line);
+  };
+
+  const readNewTail = () => {
+    if (!rolloutFile) return;
+
+    let stat = null;
+    try {
+      stat = fs.statSync(rolloutFile);
+    } catch {
+      rolloutFile = null;
+      offset = 0;
+      remainder = '';
+      return;
+    }
+    if (!stat || !stat.isFile()) return;
+    if (stat.size < offset) {
+      offset = 0;
+      remainder = '';
+    }
+    if (stat.size === offset) return;
+
+    const bytesToRead = stat.size - offset;
+    if (bytesToRead <= 0) return;
+
+    const fd = fs.openSync(rolloutFile, 'r');
+    try {
+      const buf = Buffer.allocUnsafe(bytesToRead);
+      const readBytes = fs.readSync(fd, buf, 0, bytesToRead, offset);
+      offset += readBytes;
+      consumeChunk(buf.toString('utf8', 0, readBytes));
+    } finally {
+      fs.closeSync(fd);
+    }
+  };
+
+  const resolveRolloutFile = (force = false) => {
+    const now = Date.now();
+    if (!force && now - lastScanAt < 2500) return false;
+    lastScanAt = now;
+
+    const match = findLatestRolloutFileBySessionId(sessionId, minMtimeMs);
+    if (!match) return false;
+    const nextPath = String(match.file || '');
+    if (!nextPath) return false;
+    if (nextPath === rolloutFile) return true;
+
+    rolloutFile = match.file;
+    rolloutFileMtimeMs = Number(match.mtimeMs) || 0;
+    offset = rolloutFileMtimeMs < bridgeStartedAtMs
+      ? Math.max(0, Number(match.sizeBytes) || 0)
+      : 0;
+    remainder = '';
+    readNewTail();
+    return true;
+  };
+
+  const poll = () => {
+    if (stopped) return;
+    if (!resolveRolloutFile(!rolloutFile) && !rolloutFile) return;
+    readNewTail();
+  };
+
+  pollTimer = setInterval(poll, 700);
+  pollTimer.unref?.();
+  poll();
+
+  return () => {
+    stopped = true;
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = null;
+  };
+}
+
 function composeResultText(result, session) {
   const sections = [];
 
@@ -3015,7 +3477,10 @@ function composeResultText(result, session) {
     ].join('\n'));
   }
 
-  const answer = result.messages.join('\n\n').trim();
+  const answer = composeFinalAnswerText({
+    messages: result.messages,
+    finalAnswerMessages: result.finalAnswerMessages,
+  });
   sections.push(answer || '（Codex 没有返回可见文本）');
 
   const tail = [];
@@ -3049,6 +3514,7 @@ function getSession(key) {
       onboardingEnabled: ONBOARDING_ENABLED_BY_DEFAULT,
       securityProfile: null,
       timeoutMs: null,
+      processLines: null,
       configOverrides: [],
       updatedAt: new Date().toISOString(),
     };
@@ -3089,6 +3555,10 @@ function getSession(key) {
     s.timeoutMs = null;
     migrated = true;
   }
+  if (s.processLines === undefined) {
+    s.processLines = null;
+    migrated = true;
+  }
   const normalizedLanguage = normalizeUiLanguage(s.language);
   if (s.language !== normalizedLanguage) {
     s.language = normalizedLanguage;
@@ -3102,6 +3572,11 @@ function getSession(key) {
   const normalizedTimeoutMs = normalizeSessionTimeoutMs(s.timeoutMs);
   if (s.timeoutMs !== normalizedTimeoutMs) {
     s.timeoutMs = normalizedTimeoutMs;
+    migrated = true;
+  }
+  const normalizedProcessLines = normalizeSessionProcessLines(s.processLines);
+  if (s.processLines !== normalizedProcessLines) {
+    s.processLines = normalizedProcessLines;
     migrated = true;
   }
   s.updatedAt = new Date().toISOString();
@@ -3572,8 +4047,7 @@ function ensureDir(dir) {
 }
 
 function listRecentCodexSessions(limit = 10) {
-  const home = process.env.HOME || process.env.USERPROFILE || '';
-  const sessionsDir = path.join(home, '.codex', 'sessions');
+  const sessionsDir = getCodexSessionsDir();
   if (!sessionsDir || !fs.existsSync(sessionsDir)) return [];
 
   const files = findRolloutFiles(sessionsDir);
@@ -3599,6 +4073,47 @@ function listRecentCodexSessions(limit = 10) {
   return [...latestById.values()]
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, limit);
+}
+
+function findLatestRolloutFileBySessionId(sessionId, notOlderThanMs = 0) {
+  const targetId = String(sessionId || '').trim().toLowerCase();
+  if (!targetId) return null;
+
+  const sessionsDir = getCodexSessionsDir();
+  if (!sessionsDir || !fs.existsSync(sessionsDir)) return null;
+
+  const files = findRolloutFiles(sessionsDir);
+  let latest = null;
+
+  for (const file of files) {
+    const id = parseSessionIdFromRolloutFile(path.basename(file));
+    if (!id || String(id).toLowerCase() !== targetId) continue;
+
+    let stat = null;
+    try {
+      stat = fs.statSync(file);
+    } catch {
+      continue;
+    }
+    if (!stat?.isFile()) continue;
+    if (notOlderThanMs > 0 && stat.mtimeMs < notOlderThanMs) continue;
+
+    if (!latest || stat.mtimeMs > latest.mtimeMs) {
+      latest = {
+        file,
+        mtimeMs: stat.mtimeMs,
+        sizeBytes: stat.size,
+      };
+    }
+  }
+
+  return latest;
+}
+
+function getCodexSessionsDir() {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return '';
+  return path.join(home, '.codex', 'sessions');
 }
 
 function findRolloutFiles(root) {
