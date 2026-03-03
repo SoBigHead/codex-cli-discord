@@ -19,6 +19,13 @@ import {
   summarizeCodexEvent as summarizeCodexEventBase,
 } from './progress-utils.js';
 import {
+  buildProgressEventDedupeKey,
+  composeFinalAnswerText,
+  createProgressEventDeduper,
+  extractAgentMessageText,
+  isFinalAnswerLikeAgentMessage,
+} from './codex-event-utils.js';
+import {
   formatCompletedMilestonesSummary,
   renderCompletedMilestonesLines,
 } from './progress-milestones.js';
@@ -121,6 +128,11 @@ const PROGRESS_INCLUDE_STDERR = String(process.env.PROGRESS_INCLUDE_STDERR || 'f
 const PROGRESS_PLAN_MAX_LINES = Math.min(8, Math.max(1, toInt(process.env.PROGRESS_PLAN_MAX_LINES, 4)));
 const PROGRESS_DONE_STEPS_MAX = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_DONE_STEPS_MAX, 4)));
 const PROGRESS_ACTIVITY_MAX_LINES = Math.min(12, Math.max(1, toInt(process.env.PROGRESS_ACTIVITY_MAX_LINES, 4)));
+const PROGRESS_EVENT_DEDUPE_WINDOW_MS = normalizeIntervalMs(
+  process.env.PROGRESS_EVENT_DEDUPE_WINDOW_MS,
+  2500,
+  200,
+);
 const PROGRESS_PROCESS_LINES = 2;
 const PROGRESS_PROCESS_PUSH_INTERVAL_MS = normalizeIntervalMs(
   process.env.PROGRESS_PROCESS_PUSH_INTERVAL_MS,
@@ -2513,6 +2525,10 @@ function createProgressReporter({
   let isEmitting = false;
   let rerunEmit = false;
   let activityTimer = null;
+  const isDuplicateProgressEvent = createProgressEventDeduper({
+    ttlMs: PROGRESS_EVENT_DEDUPE_WINDOW_MS,
+    maxKeys: 700,
+  });
 
   const syncActiveRun = () => {
     if (!channelState.activeRun) return;
@@ -2645,14 +2661,24 @@ function createProgressReporter({
 
   const onEvent = (ev) => {
     if (stopped) return;
-    events += 1;
     const summaryStep = summarizeCodexEvent(ev);
+    const rawActivity = extractRawProgressTextFromEvent(ev);
+    const nextPlan = extractPlanStateFromEvent(ev);
+    const completedStep = extractCompletedStepFromEvent(ev);
+    const dedupeKey = buildProgressEventDedupeKey({
+      summaryStep,
+      rawActivity,
+      completedStep,
+      planSummary: formatProgressPlanSummary(nextPlan),
+    });
+    if (isDuplicateProgressEvent(dedupeKey)) return;
+
+    events += 1;
     if (summaryStep && !summaryStep.startsWith('agent message')) {
       latestStep = summaryStep;
     } else if (!latestStep) {
       latestStep = summaryStep;
     }
-    const rawActivity = extractRawProgressTextFromEvent(ev);
     if (rawActivity) {
       enqueueActivity(rawActivity);
       // First visible line should appear quickly, then continue as a rolling queue.
@@ -2662,7 +2688,6 @@ function createProgressReporter({
         pushOneActivity();
       }
     }
-    const nextPlan = extractPlanStateFromEvent(ev);
     if (nextPlan) {
       planState = nextPlan;
       for (const item of nextPlan.steps) {
@@ -2671,7 +2696,6 @@ function createProgressReporter({
         }
       }
     }
-    const completedStep = extractCompletedStepFromEvent(ev);
     if (completedStep) appendCompletedStep(completedSteps, completedStep);
     syncActiveRun();
     void emit(false);
@@ -3062,6 +3086,7 @@ async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, 
     exitCode,
     signal,
     messages,
+    finalAnswerMessages,
     reasonings,
     usage,
     threadId,
@@ -3082,6 +3107,7 @@ async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, 
     exitCode,
     signal,
     messages,
+    finalAnswerMessages,
     reasonings,
     usage,
     threadId,
@@ -3130,6 +3156,7 @@ function spawnCodex(args, cwd, options = {}) {
     let stderrBuf = '';
 
     const messages = [];
+    const finalAnswerMessages = [];
     const reasonings = [];
     const logs = [];
     let usage = null;
@@ -3220,7 +3247,15 @@ function spawnCodex(args, cwd, options = {}) {
           break;
         case 'item.completed': {
           const item = ev.item || {};
-          if (item.type === 'agent_message' && item.text) messages.push(item.text.trim());
+          if (item.type === 'agent_message') {
+            const text = extractAgentMessageText(item);
+            if (text) {
+              messages.push(text);
+              if (isFinalAnswerLikeAgentMessage(item)) {
+                finalAnswerMessages.push(text);
+              }
+            }
+          }
           if (item.type === 'reasoning' && item.text) reasonings.push(item.text.trim());
           break;
         }
@@ -3251,6 +3286,7 @@ function spawnCodex(args, cwd, options = {}) {
         exitCode: null,
         signal: null,
         messages,
+        finalAnswerMessages,
         reasonings,
         usage,
         threadId,
@@ -3283,6 +3319,7 @@ function spawnCodex(args, cwd, options = {}) {
         exitCode,
         signal,
         messages,
+        finalAnswerMessages,
         reasonings,
         usage,
         threadId,
@@ -3440,9 +3477,10 @@ function composeResultText(result, session) {
     ].join('\n'));
   }
 
-  // Codex may emit multiple agent_message items (including process updates).
-  // Send only the latest message as final answer to avoid replaying the whole process at the end.
-  const answer = String(result.messages[result.messages.length - 1] || '').trim();
+  const answer = composeFinalAnswerText({
+    messages: result.messages,
+    finalAnswerMessages: result.finalAnswerMessages,
+  });
   sections.push(answer || '（Codex 没有返回可见文本）');
 
   const tail = [];
