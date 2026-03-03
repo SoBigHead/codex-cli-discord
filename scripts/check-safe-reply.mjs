@@ -51,6 +51,25 @@ async function run() {
   const fallbackResult = await safeReply(fallbackReply, 'fallback-ok', { logger: { warn() {} } });
   assert.deepEqual(fallbackResult, { via: 'send', payload: 'fallback-ok' });
 
+  let systemReplyCalled = false;
+  const systemMessage = {
+    id: 'm-system',
+    system: true,
+    reply: async () => {
+      systemReplyCalled = true;
+      throw new Error('reply should not be called for system message');
+    },
+    channel: {
+      send: async (payload) => ({ via: 'send', payload }),
+    },
+  };
+  const systemResult = await safeReply(systemMessage, {
+    content: 'system-fallback',
+    message_reference: { message_id: 'x' },
+  }, { logger: { warn() {} } });
+  assert.equal(systemReplyCalled, false);
+  assert.deepEqual(systemResult, { via: 'send', payload: { content: 'system-fallback' } });
+
   const nonFallbackReply = {
     id: 'm3',
     reply: async () => {
