@@ -40,6 +40,19 @@ function hasDiscordValidationCode(err, code) {
   return direct === code || raw === code;
 }
 
+function sanitizeReplyMetadata(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+  if (!('message_reference' in payload) && !('messageReference' in payload) && !('reply' in payload)) {
+    return payload;
+  }
+
+  const next = { ...payload };
+  delete next.message_reference;
+  delete next.messageReference;
+  delete next.reply;
+  return next;
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -103,6 +116,20 @@ export function isReplyToSystemMessageError(err) {
 }
 
 export async function safeReply(message, payload, { logger = console } = {}) {
+  const channel = message?.channel;
+  const channelPayload = sanitizeReplyMetadata(payload);
+
+  if (message?.system) {
+    if (!channel || typeof channel.send !== 'function') {
+      throw new Error('Cannot send message: channel.send is unavailable for system message fallback');
+    }
+    logger.warn(`⚠️ Message ${message?.id || '(unknown)'} is a system message, sending without reply reference`);
+    return await withDiscordNetworkRetry(
+      () => channel.send(channelPayload),
+      { logger, label: 'channel.send (system message)' },
+    );
+  }
+
   try {
     return await withDiscordNetworkRetry(
       () => message.reply(payload),
@@ -110,13 +137,11 @@ export async function safeReply(message, payload, { logger = console } = {}) {
     );
   } catch (err) {
     if (!isReplyToSystemMessageError(err)) throw err;
-
-    const channel = message?.channel;
     if (!channel || typeof channel.send !== 'function') throw err;
 
     logger.warn(`⚠️ Cannot reply to system message ${message?.id || '(unknown)'}, fallback to channel.send`);
     return await withDiscordNetworkRetry(
-      () => channel.send(payload),
+      () => channel.send(channelPayload),
       { logger, label: 'channel.send (safeReply fallback)' },
     );
   }
