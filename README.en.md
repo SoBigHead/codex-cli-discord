@@ -6,6 +6,8 @@ A standalone Discord bot that lets you direct **Codex CLI** and **Claude Code** 
 
 [简体中文](./README.md)
 
+**Maintainers:** [ATou](https://github.com/atou42) and [Lark](https://github.com/Larkspur-Wang).
+
 **Design:** 1 Discord **thread/channel = 1 CLI session** (auto resume for the active provider).
 
 ## Features

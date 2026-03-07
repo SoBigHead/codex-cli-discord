@@ -6,6 +6,8 @@
 
 [English](./README.en.md)
 
+**维护者：** [ATou](https://github.com/atou42) 与 [Lark](https://github.com/Larkspur-Wang) 共同维护。
+
 **设计原则：**1 个 Discord **线程/频道 = 1 个 CLI 会话**（按当前 provider 自动续聊）。
 
 ## 功能特性
