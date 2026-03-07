@@ -16,7 +16,7 @@
     "setup-hooks": "git config core.hooksPath .githooks",
     "check:atomic": "node scripts/check-atomic-commit.mjs --staged",
     "check:reply-fallback": "node scripts/check-safe-reply.mjs",
-    "test:progress": "node --test test/progress-utils.test.mjs test/progress-milestones.test.mjs test/codex-event-utils.test.mjs test/discord-message-splitter.test.mjs test/provider-utils.test.mjs test/bot-instance-utils.test.mjs test/env-loader.test.mjs",
+    "test:progress": "node --test test/progress-utils.test.mjs test/progress-milestones.test.mjs test/codex-event-utils.test.mjs test/discord-message-splitter.test.mjs test/provider-utils.test.mjs test/bot-instance-utils.test.mjs test/env-loader.test.mjs test/session-store.test.mjs test/channel-runtime.test.mjs test/channel-queue.test.mjs test/slash-command-surface.test.mjs test/text-command-handler.test.mjs test/onboarding-flow.test.mjs test/session-command-actions.test.mjs",
     "release:patch": "node scripts/cut-release.mjs patch",
     "release:minor": "node scripts/cut-release.mjs minor",
     "release:major": "node scripts/cut-release.mjs major",

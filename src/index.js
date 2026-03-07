@@ -1,5 +1,4 @@
-import { spawn, spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,6 +13,8 @@ import {
   parseOptionalProvider,
   resolveDiscordToken,
 } from './bot-instance-utils.js';
+import { createChannelQueue } from './channel-queue.js';
+import { createChannelRuntimeStore, stopChildProcess } from './channel-runtime.js';
 import { loadRuntimeEnv } from './env-loader.js';
 import {
   appendRecentActivity as appendRecentActivityBase,
@@ -38,6 +39,18 @@ import {
   formatCompletedMilestonesSummary,
   renderCompletedMilestonesLines,
 } from './progress-milestones.js';
+import { createRunnerExecutor } from './runner-executor.js';
+import { createOnboardingFlow } from './onboarding-flow.js';
+import { createSessionCommandActions } from './session-command-actions.js';
+import { createSessionStore, ensureDir, ensureGitRepo } from './session-store.js';
+import { createSessionProgressBridgeFactory } from './session-progress-bridge.js';
+import {
+  buildSlashCommands,
+  normalizeSlashCommandName as normalizeSlashCommandNameBase,
+  registerSlashCommands,
+  slashRef as slashRefBase,
+} from './slash-command-surface.js';
+import { createTextCommandHandler } from './text-command-handler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -276,8 +289,58 @@ function formatSessionIdLabel(sessionId) {
   return `\`${sessionId || '(auto — 下条消息新建)'}\``;
 }
 
-const db = loadDb();
-const channelStates = new Map();
+const sessionStore = createSessionStore({
+  dataFile: DATA_FILE,
+  workspaceRoot: WORKSPACE_ROOT,
+  botProvider: BOT_PROVIDER,
+  defaults: {
+    provider: DEFAULT_PROVIDER,
+    mode: DEFAULT_MODE,
+    language: DEFAULT_UI_LANGUAGE,
+    onboardingEnabled: ONBOARDING_ENABLED_BY_DEFAULT,
+  },
+  getSessionId,
+  normalizeProvider,
+  normalizeUiLanguage,
+  normalizeSessionSecurityProfile,
+  normalizeSessionTimeoutMs,
+  normalizeSessionProcessLines,
+  normalizeSessionCompactStrategy,
+  normalizeSessionCompactEnabled,
+  normalizeSessionCompactTokenLimit,
+});
+const { getSession, saveDb, ensureWorkspace } = sessionStore;
+
+const commandActions = createSessionCommandActions({
+  saveDb,
+  ensureWorkspace,
+  clearSessionId,
+  getSessionId,
+  setSessionId,
+  getSessionProvider,
+  getProviderShortName,
+  resolveTimeoutSetting,
+  resolveProcessLinesSetting,
+  ensureGitRepo,
+  listRecentSessions,
+  humanAge,
+});
+
+const channelRuntimeStore = createChannelRuntimeStore({
+  cloneProgressPlan,
+  truncate,
+});
+const {
+  getChannelState,
+  setActiveRun,
+  cancelChannelWork,
+  cancelAllChannelWork,
+  getRuntimeSnapshot,
+} = channelRuntimeStore;
+
+let enqueuePrompt;
+let runCodex;
+
 let client = null;
 let selfHealTimer = null;
 let selfHealInFlight = false;
@@ -304,7 +367,15 @@ function createClient() {
 function bindClientHandlers(bot) {
   bot.once('ready', async () => {
     console.log(`✅ Logged in as ${bot.user.tag}`);
-    await registerSlashCommands(bot);
+    await registerSlashCommands({
+      client: bot,
+      REST,
+      Routes,
+      discordToken: DISCORD_TOKEN,
+      restProxyAgent,
+      slashCommands,
+      logger: console,
+    });
   });
 
   // Auto-join threads so we receive messageCreate events in them
@@ -421,137 +492,58 @@ async function joinThreadWithRetry(thread, context = 'thread.join') {
 
 // ── Slash Commands ──────────────────────────────────────────────
 
-const slashCommands = [
-  new SlashCommandBuilder().setName(slashName('status')).setDescription('查看当前 thread 的 CLI 配置'),
-  new SlashCommandBuilder().setName(slashName('reset')).setDescription('清空当前会话，下条消息新开上下文'),
-  new SlashCommandBuilder().setName(slashName('sessions')).setDescription('列出最近的 provider sessions'),
-  new SlashCommandBuilder()
-    .setName(slashName('setdir'))
-    .setDescription('设置当前 thread 的工作目录')
-    .addStringOption(o => o.setName('path').setDescription('绝对路径，如 ~/GitHub/my-project').setRequired(true)),
-  !BOT_PROVIDER && new SlashCommandBuilder()
-    .setName(slashName('provider'))
-    .setDescription('切换当前频道使用的 CLI provider')
-    .addStringOption(o => o.setName('name').setDescription('provider').setRequired(true)
-      .addChoices(
-        { name: 'codex', value: 'codex' },
-        { name: 'claude', value: 'claude' },
-        { name: 'status', value: 'status' },
-      )),
-  new SlashCommandBuilder()
-    .setName(slashName('model'))
-    .setDescription('切换当前 provider 模型')
-    .addStringOption(o => o.setName('name').setDescription('模型名（如 o3, gpt-5.3-codex）或 default').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName(slashName('effort'))
-    .setDescription('设置 reasoning effort')
-    .addStringOption(o => o.setName('level').setDescription('推理力度').setRequired(true)
-      .addChoices(
-        { name: 'xhigh', value: 'xhigh' },
-        { name: 'high', value: 'high' },
-        { name: 'medium', value: 'medium' },
-        { name: 'low', value: 'low' },
-        { name: 'default', value: 'default' },
-      )),
-  new SlashCommandBuilder()
-    .setName(slashName('compact'))
-    .setDescription('配置 Codex compact（strategy/limit/enabled/status）')
-    .addStringOption(o => o.setName('key').setDescription('配置项').setRequired(true)
-      .addChoices(
-        { name: 'status', value: 'status' },
-        { name: 'strategy', value: 'strategy' },
-        { name: 'token_limit', value: 'token_limit' },
-        { name: 'native_limit', value: 'native_limit' },
-        { name: 'enabled', value: 'enabled' },
-        { name: 'reset', value: 'reset' },
-      ))
-    .addStringOption(o => o.setName('value').setDescription('值：如 native / 272000 / on / default').setRequired(false)),
-  new SlashCommandBuilder()
-    .setName(slashName('mode'))
-    .setDescription('执行模式')
-    .addStringOption(o => o.setName('type').setDescription('模式').setRequired(true)
-      .addChoices(
-        { name: 'safe (sandbox + auto-approve)', value: 'safe' },
-        { name: 'dangerous (无 sandbox 无审批)', value: 'dangerous' },
-      )),
-  new SlashCommandBuilder()
-    .setName(slashName('name'))
-    .setDescription('给当前 session 起个名字，方便识别')
-    .addStringOption(o => o.setName('label').setDescription('名字，如「cc-hub诊断」「埋点重构」').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName(slashName('resume'))
-    .setDescription('继承一个已有的 session')
-    .addStringOption(o => o.setName('session_id').setDescription('provider session UUID').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName(slashName('queue'))
-    .setDescription('查看当前频道的任务队列状态'),
-  new SlashCommandBuilder()
-    .setName(slashName('doctor'))
-    .setDescription('查看 bot 运行与安全配置体检'),
-  new SlashCommandBuilder()
-    .setName(slashName('onboarding'))
-    .setDescription('新用户引导：安装后检查与首跑步骤（按钮分步）'),
-  new SlashCommandBuilder()
-    .setName(slashName('onboarding_config'))
-    .setDescription('配置 onboarding 开关（当前频道）')
-    .addStringOption(o => o.setName('action').setDescription('操作').setRequired(true)
-      .addChoices(
-        { name: 'on', value: 'on' },
-        { name: 'off', value: 'off' },
-        { name: 'status', value: 'status' },
-      )),
-  new SlashCommandBuilder()
-    .setName(slashName('language'))
-    .setDescription('设置消息提示语言（中文/English）')
-    .addStringOption(o => o.setName('name').setDescription('语言').setRequired(true)
-      .addChoices(
-        { name: '中文', value: 'zh' },
-        { name: 'English', value: 'en' },
-      )),
-  new SlashCommandBuilder()
-    .setName(slashName('profile'))
-    .setDescription('设置当前频道 security profile（auto/solo/team/public）')
-    .addStringOption(o => o.setName('name').setDescription('profile').setRequired(true)
-      .addChoices(
-        { name: 'auto', value: 'auto' },
-        { name: 'solo', value: 'solo' },
-        { name: 'team', value: 'team' },
-        { name: 'public', value: 'public' },
-        { name: 'status', value: 'status' },
-      )),
-  new SlashCommandBuilder()
-    .setName(slashName('timeout'))
-    .setDescription('设置当前频道 runner timeout（ms/off/status）')
-    .addStringOption(o => o.setName('value').setDescription('如 60000 / off / status').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName(slashName('process_lines'))
-    .setDescription('设置过程内容窗口行数（1-5 或 status）')
-    .addStringOption(o => o.setName('value').setDescription('如 2 / 3 / 5 / status').setRequired(true)),
-  new SlashCommandBuilder()
-    .setName(slashName('progress'))
-    .setDescription('查看当前任务的最新执行进度'),
-  new SlashCommandBuilder()
-    .setName(slashName('cancel'))
-    .setDescription('中断当前任务并清空排队消息'),
-].filter(Boolean);
+const slashCommands = buildSlashCommands({
+  SlashCommandBuilder,
+  slashPrefix: SLASH_PREFIX,
+  botProvider: BOT_PROVIDER,
+});
+const normalizeSlashCommandName = (name) => normalizeSlashCommandNameBase(name, SLASH_PREFIX);
+const slashRef = (base) => slashRefBase(base, SLASH_PREFIX);
 
-async function registerSlashCommands(client) {
-  try {
-    const rest = new REST({ version: '10' }).setToken(DISCORD_TOKEN);
-    if (restProxyAgent) {
-      rest.setAgent(restProxyAgent);
-    }
-    const body = slashCommands.map(c => c.toJSON());
-
-    // Register to all guilds the bot is in (guild commands appear instantly)
-    for (const guild of client.guilds.cache.values()) {
-      await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), { body });
-      console.log(`📝 Registered ${body.length} slash commands in guild: ${guild.name}`);
-    }
-  } catch (err) {
-    console.error('Failed to register slash commands:', err);
-  }
-}
+const {
+  isOnboardingEnabled,
+  parseOnboardingConfigAction,
+  formatOnboardingDisabledMessage,
+  formatOnboardingConfigReport,
+  formatOnboardingConfigHelp,
+  formatOnboardingReport,
+  isOnboardingButtonId,
+  buildOnboardingActionRows,
+  formatOnboardingStepReport,
+  handleOnboardingButtonInteraction,
+} = createOnboardingFlow({
+  onboardingEnabledByDefault: ONBOARDING_ENABLED_BY_DEFAULT,
+  defaultUiLanguage: DEFAULT_UI_LANGUAGE,
+  onboardingTotalSteps: ONBOARDING_TOTAL_STEPS,
+  workspaceRoot: WORKSPACE_ROOT,
+  discordToken: DISCORD_TOKEN,
+  allowedChannelIds: ALLOWED_CHANNEL_IDS,
+  allowedUserIds: ALLOWED_USER_IDS,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  getSession,
+  saveDb,
+  getSessionProvider,
+  getRuntimeSnapshot,
+  getCliHealth,
+  resolveSecurityContext,
+  getEffectiveSecurityProfile,
+  resolveTimeoutSetting,
+  getSessionLanguage,
+  normalizeUiLanguage,
+  slashRef,
+  formatCliHealth,
+  formatLanguageLabel,
+  formatSecurityProfileLabel,
+  formatTimeoutLabel,
+  formatQueueLimit,
+  formatSecurityProfileDisplay,
+  formatConfigCommandStatus,
+  parseUiLanguageInput,
+  parseSecurityProfileInput,
+  parseTimeoutConfigAction,
+});
 
 async function handleInteractionCreate(interaction) {
   if (interaction.isButton()) {
@@ -606,25 +598,19 @@ async function handleInteractionCreate(interaction) {
       }
 
       case 'reset': {
-        clearSessionId(session);
-        session.configOverrides = [];
-        saveDb();
+        commandActions.resetSession(session);
         await respond('♻️ 会话已清空，下条消息新开上下文。');
         break;
       }
 
       case 'sessions': {
         try {
-          const provider = getSessionProvider(session);
-          const sessions = listRecentSessions({ provider, workspaceDir: ensureWorkspace(session, key), limit: 10 });
-          if (!sessions.length) {
-            await respond({ content: `没有找到任何 ${getProviderShortName(provider)} session。`, flags: 64 });
-            break;
-          }
-
-          const lines = sessions.map((s, i) => `${i + 1}. \`${s.id}\` (${humanAge(Date.now() - s.mtime)} ago)`);
           await respond({
-            content: [`**最近 ${getProviderShortName(provider)} Sessions**（用 \`${slashRef('resume')}\` 继承）`, ...lines].join('\n'),
+            content: commandActions.formatRecentSessionsReport({
+              key,
+              session,
+              resumeRef: slashRef('resume'),
+            }),
             flags: 64,
           });
         } catch (err) {
@@ -640,10 +626,7 @@ async function handleInteractionCreate(interaction) {
           await respond({ content: `❌ 目录不存在：\`${resolved}\``, flags: 64 });
           break;
         }
-        ensureGitRepo(resolved);
-        session.workspaceDir = resolved;
-        clearSessionId(session);
-        saveDb();
+        commandActions.setWorkspaceDir(session, resolved);
         await respond(`✅ workspace → \`${resolved}\`（会话已重置）`);
         break;
       }
@@ -664,19 +647,15 @@ async function handleInteractionCreate(interaction) {
           });
           break;
         }
-        const previous = getSessionProvider(session);
-        session.provider = requested;
-        clearSessionId(session);
-        saveDb();
+        const { previous } = commandActions.setProvider(session, requested);
         await respond(`✅ provider = \`${requested}\` (${getProviderDisplayName(requested)})${previous === requested ? '' : '，已清空旧 session 绑定'}`);
         break;
       }
 
       case 'model': {
         const name = interaction.options.getString('name');
-        session.model = name.toLowerCase() === 'default' ? null : name;
-        saveDb();
-        await respond(`✅ model = ${session.model || '(default)'}`);
+        const { model } = commandActions.setModel(session, name);
+        await respond(`✅ model = ${model || '(default)'}`);
         break;
       }
 
@@ -690,9 +669,8 @@ async function handleInteractionCreate(interaction) {
           });
           break;
         }
-        session.effort = level === 'default' ? null : level;
-        saveDb();
-        await respond(`✅ effort = ${session.effort || '(default)'}`);
+        const { effort } = commandActions.setReasoningEffort(session, level);
+        await respond(`✅ effort = ${effort || '(default)'}`);
         break;
       }
 
@@ -716,21 +694,7 @@ async function handleInteractionCreate(interaction) {
           });
           break;
         }
-        if (parsed.type === 'reset') {
-          session.compactStrategy = null;
-          session.compactEnabled = null;
-          session.compactThresholdTokens = null;
-          session.nativeCompactTokenLimit = null;
-        } else if (parsed.type === 'set_strategy') {
-          session.compactStrategy = parsed.strategy;
-        } else if (parsed.type === 'set_enabled') {
-          session.compactEnabled = parsed.enabled;
-        } else if (parsed.type === 'set_threshold') {
-          session.compactThresholdTokens = parsed.tokens;
-        } else if (parsed.type === 'set_native_limit') {
-          session.nativeCompactTokenLimit = parsed.tokens;
-        }
-        saveDb();
+        commandActions.applyCompactConfig(session, parsed);
         await respond({
           content: formatCompactConfigReport(language, session, true),
           flags: 64,
@@ -740,25 +704,22 @@ async function handleInteractionCreate(interaction) {
 
       case 'mode': {
         const type = interaction.options.getString('type');
-        session.mode = type;
-        saveDb();
-        await respond(`✅ mode = ${session.mode}`);
+        const { mode } = commandActions.setMode(session, type);
+        await respond(`✅ mode = ${mode}`);
         break;
       }
 
       case 'resume': {
         const sid = interaction.options.getString('session_id');
-        setSessionId(session, sid);
-        saveDb();
-        await respond(`✅ 已绑定 ${getProviderShortName(getSessionProvider(session))} session: \`${getSessionId(session)}\``);
+        const binding = commandActions.bindSession(session, sid);
+        await respond(`✅ 已绑定 ${binding.providerLabel} session: \`${binding.sessionId}\``);
         break;
       }
 
       case 'name': {
         const label = interaction.options.getString('label').trim();
-        session.name = label;
-        saveDb();
-        await respond(`✅ session 命名为: **${label}**`);
+        const renamed = commandActions.renameSession(session, label);
+        await respond(`✅ session 命名为: **${renamed.label}**`);
         break;
       }
 
@@ -800,10 +761,9 @@ async function handleInteractionCreate(interaction) {
         const action = String(interaction.options.getString('action') || '').trim().toLowerCase();
         const language = getSessionLanguage(session);
         if (action === 'on' || action === 'off') {
-          session.onboardingEnabled = action === 'on';
-          saveDb();
+          const { enabled } = commandActions.setOnboardingEnabled(session, action === 'on');
           await respond({
-            content: formatOnboardingConfigReport(language, session.onboardingEnabled, true),
+            content: formatOnboardingConfigReport(language, enabled, true),
             flags: 64,
           });
           break;
@@ -817,9 +777,7 @@ async function handleInteractionCreate(interaction) {
 
       case 'language': {
         const requested = interaction.options.getString('name');
-        const language = parseUiLanguageInput(requested) || DEFAULT_UI_LANGUAGE;
-        session.language = language;
-        saveDb();
+        const { language } = commandActions.setLanguage(session, parseUiLanguageInput(requested) || DEFAULT_UI_LANGUAGE);
         await respond({
           content: formatLanguageConfigReport(language, true),
           flags: 64,
@@ -844,10 +802,9 @@ async function handleInteractionCreate(interaction) {
           });
           break;
         }
-        session.securityProfile = profile;
-        saveDb();
+        const updated = commandActions.setSecurityProfile(session, profile);
         await respond({
-          content: formatProfileConfigReport(getSessionLanguage(session), profile, true),
+          content: formatProfileConfigReport(getSessionLanguage(session), updated.profile, true),
           flags: 64,
         });
         break;
@@ -870,10 +827,9 @@ async function handleInteractionCreate(interaction) {
           });
           break;
         }
-        session.timeoutMs = parsedTimeout.timeoutMs;
-        saveDb();
+        const { timeoutSetting } = commandActions.setTimeoutMs(session, parsedTimeout.timeoutMs);
         await respond({
-          content: formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true),
+          content: formatTimeoutConfigReport(language, timeoutSetting, true),
           flags: 64,
         });
         break;
@@ -896,10 +852,9 @@ async function handleInteractionCreate(interaction) {
           });
           break;
         }
-        session.processLines = parsed.lines;
-        saveDb();
+        const { processLinesSetting } = commandActions.setProcessLines(session, parsed.lines);
         await respond({
-          content: formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), true),
+          content: formatProcessLinesConfigReport(language, processLinesSetting, true),
           flags: 64,
         });
         break;
@@ -1193,6 +1148,67 @@ function isProcessAlive(pid) {
   }
 }
 
+const handleCommand = createTextCommandHandler({
+  botProvider: BOT_PROVIDER,
+  enableConfigCmd: ENABLE_CONFIG_CMD,
+  getSession,
+  saveDb,
+  ensureWorkspace,
+  clearSessionId,
+  getSessionId,
+  setSessionId,
+  getSessionProvider,
+  getSessionLanguage,
+  getProviderDisplayName,
+  getProviderShortName,
+  commandActions,
+  isOnboardingEnabled,
+  safeReply,
+  formatHelpReport,
+  formatStatusReport,
+  formatQueueReport,
+  formatDoctorReport,
+  formatOnboardingConfigHelp,
+  formatOnboardingConfigReport,
+  formatOnboardingDisabledMessage,
+  formatOnboardingReport,
+  formatLanguageConfigHelp,
+  formatLanguageConfigReport,
+  formatProfileConfigHelp,
+  formatProfileConfigReport,
+  formatTimeoutConfigHelp,
+  formatTimeoutConfigReport,
+  formatProcessLinesConfigHelp,
+  formatProcessLinesConfigReport,
+  formatProgressReport,
+  formatCancelReport,
+  formatCompactStrategyConfigHelp,
+  formatCompactConfigReport,
+  formatReasoningEffortHelp,
+  formatReasoningEffortUnsupported,
+  parseProviderInput,
+  parseOnboardingConfigAction,
+  parseUiLanguageInput,
+  parseSecurityProfileInput,
+  parseTimeoutConfigAction,
+  parseProcessLinesConfigAction,
+  parseCompactConfigFromText,
+  parseConfigKey,
+  parseReasoningEffortInput,
+  getEffectiveSecurityProfile,
+  resolveTimeoutSetting,
+  resolveProcessLinesSetting,
+  describeConfigPolicy,
+  isConfigKeyAllowed,
+  isReasoningEffortSupported,
+  cancelChannelWork,
+  resolvePath,
+  ensureGitRepo,
+  listRecentSessions,
+  humanAge,
+  safeError,
+});
+
 // ── Message handler (prompts → Codex) ──────────────────────────
 
 acquireSingleInstanceLock();
@@ -1203,513 +1219,6 @@ try {
 } catch (err) {
   console.error(`❌ Failed to boot Discord client: ${safeError(err)}`);
   process.exit(1);
-}
-
-async function handleCommand(message, key, content) {
-  const [cmd, ...rest] = content.split(/\s+/);
-  const arg = rest.join(' ').trim();
-  const session = getSession(key);
-
-  switch (cmd.toLowerCase()) {
-    case '!help': {
-      await safeReply(message, formatHelpReport(session));
-      break;
-    }
-
-    case '!status': {
-      await safeReply(message, formatStatusReport(key, session, message.channel));
-      break;
-    }
-
-    case '!queue': {
-      await safeReply(message, formatQueueReport(key, session, message.channel));
-      break;
-    }
-
-    case '!doctor': {
-      await safeReply(message, formatDoctorReport(key, session, message.channel));
-      break;
-    }
-
-    case '!provider': {
-      if (BOT_PROVIDER) {
-        await safeReply(message, `🔒 当前 bot 已锁定 provider = \`${BOT_PROVIDER}\` (${getProviderDisplayName(BOT_PROVIDER)})，不能切换。`);
-        break;
-      }
-      if (!arg || ['status', 'state', 'show', '查看', '状态'].includes(arg.toLowerCase())) {
-        const provider = getSessionProvider(session);
-        await safeReply(message, `ℹ️ 当前 provider = \`${provider}\` (${getProviderDisplayName(provider)})`);
-        break;
-      }
-      const requested = parseProviderInput(arg);
-      if (!requested) {
-        await safeReply(message, '用法：`!provider <codex|claude|status>`');
-        break;
-      }
-      const previous = getSessionProvider(session);
-      session.provider = requested;
-      clearSessionId(session);
-      saveDb();
-      await safeReply(message, `✅ provider = \`${requested}\` (${getProviderDisplayName(requested)})${previous === requested ? '' : '，已清空旧 session 绑定'}`);
-      break;
-    }
-
-    case '!onboarding':
-    case '!onboard':
-    case '!guide': {
-      const language = getSessionLanguage(session);
-      const onboardingOp = parseOnboardingConfigAction(arg);
-      if (cmd.toLowerCase() === '!onboarding' && onboardingOp) {
-        if (onboardingOp.type === 'invalid') {
-          await safeReply(message, formatOnboardingConfigHelp(language));
-          break;
-        }
-        if (onboardingOp.type === 'status') {
-          await safeReply(message, formatOnboardingConfigReport(language, isOnboardingEnabled(session), false));
-          break;
-        }
-        if (onboardingOp.type === 'set') {
-          session.onboardingEnabled = onboardingOp.enabled;
-          saveDb();
-          await safeReply(message, formatOnboardingConfigReport(language, session.onboardingEnabled, true));
-          break;
-        }
-      }
-      if (!isOnboardingEnabled(session)) {
-        await safeReply(message, formatOnboardingDisabledMessage(language));
-        break;
-      }
-      await safeReply(message, formatOnboardingReport(key, session, message.channel, language));
-      break;
-    }
-
-    case '!lang':
-    case '!language': {
-      const requested = parseUiLanguageInput(arg);
-      if (!requested) {
-        await safeReply(message, formatLanguageConfigHelp(getSessionLanguage(session)));
-        break;
-      }
-      session.language = requested;
-      saveDb();
-      await safeReply(message, formatLanguageConfigReport(requested, true));
-      break;
-    }
-
-    case '!profile': {
-      const language = getSessionLanguage(session);
-      if (!arg || ['status', 'state', 'show', '查看', '状态'].includes(arg.toLowerCase())) {
-        await safeReply(message, formatProfileConfigReport(language, getEffectiveSecurityProfile(session).profile, false));
-        break;
-      }
-      const profile = parseSecurityProfileInput(arg);
-      if (!profile) {
-        await safeReply(message, formatProfileConfigHelp(language));
-        break;
-      }
-      session.securityProfile = profile;
-      saveDb();
-      await safeReply(message, formatProfileConfigReport(language, profile, true));
-      break;
-    }
-
-    case '!timeout': {
-      const language = getSessionLanguage(session);
-      const parsedTimeout = parseTimeoutConfigAction(arg || 'status');
-      if (!parsedTimeout || parsedTimeout.type === 'invalid') {
-        await safeReply(message, formatTimeoutConfigHelp(language));
-        break;
-      }
-      if (parsedTimeout.type === 'status') {
-        await safeReply(message, formatTimeoutConfigReport(language, resolveTimeoutSetting(session), false));
-        break;
-      }
-      session.timeoutMs = parsedTimeout.timeoutMs;
-      saveDb();
-      await safeReply(message, formatTimeoutConfigReport(language, resolveTimeoutSetting(session), true));
-      break;
-    }
-
-    case '!processlines':
-    case '!progresslines':
-    case '!plines': {
-      const language = getSessionLanguage(session);
-      const parsed = parseProcessLinesConfigAction(arg || 'status');
-      if (!parsed || parsed.type === 'invalid') {
-        await safeReply(message, formatProcessLinesConfigHelp(language));
-        break;
-      }
-      if (parsed.type === 'status') {
-        await safeReply(message, formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), false));
-        break;
-      }
-      session.processLines = parsed.lines;
-      saveDb();
-      await safeReply(message, formatProcessLinesConfigReport(language, resolveProcessLinesSetting(session), true));
-      break;
-    }
-
-    case '!progress': {
-      await safeReply(message, formatProgressReport(key, session, message.channel));
-      break;
-    }
-
-    case '!abort':
-    case '!cancel':
-    case '!stop': {
-      const outcome = cancelChannelWork(key, `text_command:${cmd.toLowerCase()}`);
-      await safeReply(message, formatCancelReport(outcome));
-      break;
-    }
-
-    case '!cd':
-    case '!setdir': {
-      if (!arg) {
-        await safeReply(message, '用法：`!setdir <path>`\n例：`!setdir ~/GitHub/my-project`');
-        return;
-      }
-      const resolved = resolvePath(arg);
-      if (!fs.existsSync(resolved)) {
-        await safeReply(message, `❌ 目录不存在：\`${resolved}\`\n要新建的话先 mkdir。`);
-        return;
-      }
-      ensureGitRepo(resolved);
-      session.workspaceDir = resolved;
-      clearSessionId(session);
-      saveDb();
-      await safeReply(message, `✅ workspace → \`${resolved}\`\n会话已重置（新目录 = 新上下文）。`);
-      break;
-    }
-
-    case '!resume': {
-      if (!arg) {
-        await safeReply(message, '用法：`!resume <session-id>`\n用 `!sessions` 查看当前 provider 可用的 session。');
-        return;
-      }
-      setSessionId(session, arg);
-      saveDb();
-      await safeReply(message, `✅ 已绑定 ${getProviderShortName(getSessionProvider(session))} session: \`${getSessionId(session)}\`\n下条消息会 resume 这个上下文。`);
-      break;
-    }
-
-    case '!sessions': {
-      try {
-        const provider = getSessionProvider(session);
-        const sessions = listRecentSessions({ provider, workspaceDir: ensureWorkspace(session, key), limit: 10 });
-        if (!sessions.length) {
-          await safeReply(message, `没有找到任何 ${getProviderShortName(provider)} session。`);
-          break;
-        }
-
-        const lines = sessions.map((s, i) => {
-          const ago = humanAge(Date.now() - s.mtime);
-          return `${i + 1}. \`${s.id}\` (${ago} ago)`;
-        });
-
-        await safeReply(message, [
-          `**最近 ${getProviderShortName(provider)} Sessions**（用 \`!resume <id>\` 继承）`,
-          ...lines,
-        ].join('\n'));
-      } catch (err) {
-        await safeReply(message, `❌ 读取 sessions 失败：${safeError(err)}`);
-      }
-      break;
-    }
-
-    case '!model': {
-      if (!arg) {
-        await safeReply(message, '用法：`!model <name|default>`\n例：`!model o3` / `!model gpt-5.3-codex` / `!model default`');
-        return;
-      }
-      if (arg.toLowerCase() === 'default') {
-        session.model = null;
-      } else {
-        session.model = arg;
-      }
-      saveDb();
-      await safeReply(message, `✅ model = ${session.model || '(default from config.toml)'}`);
-      break;
-    }
-
-    case '!effort': {
-      const language = getSessionLanguage(session);
-      const parsed = parseReasoningEffortInput(arg, { allowDefault: true });
-      if (!parsed) {
-        await safeReply(message, formatReasoningEffortHelp(language));
-        return;
-      }
-      const provider = getSessionProvider(session);
-      if (parsed !== 'default' && !isReasoningEffortSupported(provider, parsed)) {
-        await safeReply(message, formatReasoningEffortUnsupported(provider, language));
-        return;
-      }
-      if (parsed === 'default') {
-        session.effort = null;
-      } else {
-        session.effort = parsed;
-      }
-      saveDb();
-      await safeReply(message, `✅ reasoning effort = ${session.effort || '(default from config.toml)'}`);
-      break;
-    }
-
-    case '!compact': {
-      const language = getSessionLanguage(session);
-      const parsed = parseCompactConfigFromText(arg || 'status');
-      if (!parsed || parsed.type === 'invalid') {
-        await safeReply(message, formatCompactStrategyConfigHelp(language));
-        break;
-      }
-      if (parsed.type === 'status') {
-        await safeReply(message, formatCompactConfigReport(language, session, false));
-        break;
-      }
-      if (parsed.type === 'reset') {
-        session.compactStrategy = null;
-        session.compactEnabled = null;
-        session.compactThresholdTokens = null;
-        session.nativeCompactTokenLimit = null;
-      } else if (parsed.type === 'set_strategy') {
-        session.compactStrategy = parsed.strategy;
-      } else if (parsed.type === 'set_enabled') {
-        session.compactEnabled = parsed.enabled;
-      } else if (parsed.type === 'set_threshold') {
-        session.compactThresholdTokens = parsed.tokens;
-      } else if (parsed.type === 'set_native_limit') {
-        session.nativeCompactTokenLimit = parsed.tokens;
-      }
-      saveDb();
-      await safeReply(message, formatCompactConfigReport(language, session, true));
-      break;
-    }
-
-    case '!config': {
-      if (!ENABLE_CONFIG_CMD) {
-        await safeReply(message, '⛔ `!config` 当前已禁用。可在 `.env` 设置 `ENABLE_CONFIG_CMD=true` 后重启。');
-        return;
-      }
-      if (!arg) {
-        await safeReply(message, [
-          '用法：`!config <key=value>`',
-          '例：`!config personality="concise"`',
-          `允许的 key：${describeConfigPolicy()}`,
-        ].join('\n'));
-        return;
-      }
-      const keyName = parseConfigKey(arg);
-      if (!keyName) {
-        await safeReply(message, '❌ 参数格式错误：必须是 `key=value`。');
-        return;
-      }
-      if (!isConfigKeyAllowed(keyName)) {
-        await safeReply(message, `⛔ 不允许的配置 key：\`${keyName}\`\n允许的 key：${describeConfigPolicy()}`);
-        return;
-      }
-      session.configOverrides = session.configOverrides || [];
-      session.configOverrides.push(arg);
-      saveDb();
-      await safeReply(message, `✅ 已添加配置：\`${arg}\`\n当前额外配置：${session.configOverrides.map(c => `\`${c}\``).join(', ')}`);
-      break;
-    }
-
-    case '!mode': {
-      if (!arg || !['safe', 'dangerous'].includes(arg.toLowerCase())) {
-        await safeReply(message, '用法：`!mode <safe|dangerous>`');
-        return;
-      }
-      session.mode = arg.toLowerCase();
-      saveDb();
-      await safeReply(message, `✅ mode = ${session.mode}`);
-      break;
-    }
-
-    case '!reset': {
-      clearSessionId(session);
-      session.configOverrides = [];
-      saveDb();
-      await safeReply(message, '♻️ 已清空会话 + 额外配置。下条消息新开上下文。');
-      break;
-    }
-
-    default:
-      await safeReply(message, '未知命令。发 `!help` 看命令列表。');
-  }
-}
-
-function getChannelState(key) {
-  let state = channelStates.get(key);
-  if (!state) {
-    state = {
-      running: false,
-      queue: [],
-      activeRun: null,
-      cancelRequested: false,
-    };
-    channelStates.set(key, state);
-  }
-  return state;
-}
-
-async function enqueuePrompt(message, key, content, securityContext = null) {
-  const state = getChannelState(key);
-  const security = securityContext || resolveSecurityContext(message.channel, getSession(key));
-  const maxQueue = security.maxQueuePerChannel;
-  if (maxQueue > 0 && state.queue.length >= maxQueue) {
-    await safeReply(
-      message,
-      `🚧 当前频道队列已满（上限 ${maxQueue}）。请稍后重试，或用 \`!queue\` / \`!abort\` 处理积压任务。`,
-    );
-    return;
-  }
-  const queuedAhead = (state.running ? 1 : 0) + state.queue.length;
-
-  state.queue.push({
-    message,
-    key,
-    content,
-    enqueuedAt: Date.now(),
-  });
-
-  if (queuedAhead > 0) {
-    await safeReply(
-      message,
-      `⏳ 已加入队列，前面还有 ${queuedAhead} 条。可用 \`!queue\` 查看状态，\`!abort\` 中断当前任务。`,
-    );
-  }
-
-  void processPromptQueue(key);
-}
-
-async function processPromptQueue(key) {
-  const state = getChannelState(key);
-  if (state.running) return;
-
-  state.running = true;
-  try {
-    while (state.queue.length) {
-      const job = state.queue.shift();
-      if (!job) continue;
-      await runPromptJob(state, job);
-    }
-  } finally {
-    state.running = false;
-    state.activeRun = null;
-    state.cancelRequested = false;
-  }
-}
-
-async function runPromptJob(channelState, job) {
-  const { message, key, content } = job;
-  channelState.cancelRequested = false;
-
-  try {
-    await message.react('⚡').catch(() => {});
-    const outcome = await handlePrompt(message, key, content, channelState);
-    await message.reactions.cache.get('⚡')?.users.remove(client?.user?.id).catch(() => {});
-    if (outcome.ok) {
-      await message.react('✅').catch(() => {});
-    } else if (outcome.cancelled) {
-      await message.react('🛑').catch(() => {});
-    } else {
-      await message.react('❌').catch(() => {});
-    }
-  } catch (err) {
-    console.error('runPromptJob error:', err);
-    try {
-      await message.reactions.cache.get('⚡')?.users.remove(client?.user?.id).catch(() => {});
-      await message.react('❌').catch(() => {});
-      await safeReply(message, `❌ 处理失败：${safeError(err)}`);
-    } catch {
-      // ignore
-    }
-  } finally {
-    channelState.activeRun = null;
-  }
-}
-
-function setActiveRun(channelState, message, prompt, child, phase = 'exec') {
-  const prev = channelState.activeRun;
-  channelState.activeRun = {
-    child,
-    startedAt: Date.now(),
-    messageId: message.id,
-    phase,
-    promptPreview: truncate(String(prompt || '').replace(/\s+/g, ' '), 120),
-    cancelRequested: Boolean(channelState.cancelRequested),
-    progressEvents: prev?.progressEvents || 0,
-    lastProgressText: prev?.lastProgressText || null,
-    lastProgressAt: prev?.lastProgressAt || null,
-    progressMessageId: prev?.progressMessageId || null,
-    progressPlan: cloneProgressPlan(prev?.progressPlan),
-    completedSteps: Array.isArray(prev?.completedSteps) ? [...prev.completedSteps] : [],
-    recentActivities: Array.isArray(prev?.recentActivities) ? [...prev.recentActivities] : [],
-  };
-}
-
-function stopChildProcess(child) {
-  if (!child || child.killed) return;
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    return;
-  }
-  setTimeout(() => {
-    try {
-      if (!child.killed) child.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
-  }, 3000).unref?.();
-}
-
-function cancelChannelWork(key, reason = 'manual') {
-  const state = getChannelState(key);
-  const queued = state.queue.length;
-  state.queue.length = 0;
-  state.cancelRequested = true;
-
-  let cancelledRunning = false;
-  let pid = null;
-  if (state.activeRun?.child) {
-    state.activeRun.cancelRequested = true;
-    cancelledRunning = true;
-    pid = state.activeRun.child.pid ?? null;
-    stopChildProcess(state.activeRun.child);
-  }
-
-  return {
-    key,
-    reason,
-    cancelledRunning,
-    pid,
-    clearedQueued: queued,
-  };
-}
-
-function cancelAllChannelWork(reason = 'system') {
-  for (const key of channelStates.keys()) {
-    cancelChannelWork(key, reason);
-  }
-}
-
-function getRuntimeSnapshot(key) {
-  const state = getChannelState(key);
-  const active = state.activeRun;
-  return {
-    running: Boolean(state.running || active),
-    queued: state.queue.length,
-    activeSinceMs: active ? Math.max(0, Date.now() - active.startedAt) : null,
-    phase: active?.phase || null,
-    pid: active?.child?.pid ?? null,
-    messageId: active?.messageId || null,
-    progressEvents: active?.progressEvents || 0,
-    progressText: active?.lastProgressText || null,
-    progressAgoMs: active?.lastProgressAt ? Math.max(0, Date.now() - active.lastProgressAt) : null,
-    progressMessageId: active?.progressMessageId || null,
-    progressPlan: cloneProgressPlan(active?.progressPlan),
-    completedSteps: Array.isArray(active?.completedSteps) ? [...active.completedSteps] : [],
-    recentActivities: Array.isArray(active?.recentActivities) ? [...active.recentActivities] : [],
-  };
 }
 
 function formatRuntimePhaseLabel(phase, language = 'en') {
@@ -2305,23 +1814,6 @@ function parseProcessLinesConfigAction(value) {
   return { type: 'set', lines };
 }
 
-function isOnboardingEnabled(session) {
-  if (!session) return ONBOARDING_ENABLED_BY_DEFAULT;
-  return session.onboardingEnabled !== false;
-}
-
-function parseOnboardingConfigAction(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  if (!raw) return null;
-  if (['status', 'show', 'state', '查看', '状态'].includes(raw)) return { type: 'status' };
-  if (['on', 'enable', 'enabled', 'true', '1', 'yes', '开启', '启用', '打开'].includes(raw)) {
-    return { type: 'set', enabled: true };
-  }
-  if (['off', 'disable', 'disabled', 'false', '0', 'no', '关闭', '禁用'].includes(raw)) {
-    return { type: 'set', enabled: false };
-  }
-  return { type: 'invalid' };
-}
 
 function formatLanguageConfigHelp(language) {
   if (language === 'en') {
@@ -2428,45 +1920,6 @@ function formatProcessLinesConfigReport(language, setting, changed) {
     : `ℹ️ 当前过程内容窗口为 ${label}`;
 }
 
-function formatOnboardingDisabledMessage(language) {
-  if (language === 'en') {
-    return [
-      'ℹ️ Onboarding is currently disabled in this channel.',
-      `Enable with \`${slashRef('onboarding_config')} on\` or \`!onboarding on\`.`,
-    ].join('\n');
-  }
-  return [
-    'ℹ️ 当前频道已关闭 onboarding。',
-    `可通过 \`${slashRef('onboarding_config')} on\` 或 \`!onboarding on\` 重新开启。`,
-  ].join('\n');
-}
-
-function formatOnboardingConfigReport(language, enabled, changed) {
-  const state = enabled ? 'on' : 'off';
-  if (language === 'en') {
-    if (changed) {
-      return `✅ Onboarding is now ${state}\nUse \`${slashRef('onboarding')}\` or \`!onboarding\` to open guide.`;
-    }
-    return `ℹ️ Onboarding is currently ${state}`;
-  }
-  if (changed) {
-    return `✅ onboarding 已设置为 ${state}\n可使用 \`${slashRef('onboarding')}\` 或 \`!onboarding\` 打开引导。`;
-  }
-  return `ℹ️ 当前 onboarding = ${state}`;
-}
-
-function formatOnboardingConfigHelp(language) {
-  if (language === 'en') {
-    return [
-      'Usage: `!onboarding <on|off|status>`',
-      `Current command also supports slash: \`${slashRef('onboarding_config')} <on|off|status>\``,
-    ].join('\n');
-  }
-  return [
-    '用法：`!onboarding <on|off|status>`',
-    `也可使用 slash：\`${slashRef('onboarding_config')} <on|off|status>\``,
-  ].join('\n');
-}
 
 function formatHelpReport(session) {
   const language = getSessionLanguage(session);
@@ -2550,437 +2003,6 @@ function formatHelpReport(session) {
   ].filter(Boolean).join('\n');
 }
 
-function getOnboardingSnapshot(key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
-  const provider = getSessionProvider(session);
-  const runtime = getRuntimeSnapshot(key);
-  const cliHealth = getCliHealth(provider);
-  const security = resolveSecurityContext(channel, session);
-  const profileSetting = getEffectiveSecurityProfile(session);
-  const timeoutSetting = resolveTimeoutSetting(session);
-  const currentLanguage = getSessionLanguage(session);
-  const hasToken = Boolean(DISCORD_TOKEN);
-  const hasWorkspace = Boolean(String(WORKSPACE_ROOT || '').trim());
-  const lang = normalizeUiLanguage(language);
-  const mentionHint = security.mentionOnly
-    ? (lang === 'en'
-      ? 'Normal chat messages require @Bot mention (or use `!` commands).'
-      : '本频道普通消息需 @Bot（或直接用 `!` 命令）。')
-    : (lang === 'en'
-      ? 'Normal messages in this channel can be sent directly to the bot.'
-      : '本频道普通消息可直接发送给 Bot。');
-  const firstPromptHint = security.mentionOnly
-    ? (lang === 'en'
-      ? 'Send `@Bot check current directory and create a TODO`'
-      : '发送 `@Bot 帮我检查当前目录并创建一个 TODO`')
-    : (lang === 'en'
-      ? 'Send `check current directory and create a TODO`'
-      : '发送 `帮我检查当前目录并创建一个 TODO`');
-  return {
-    provider,
-    language: lang,
-    runtime,
-    cliHealth,
-    security,
-    profileSetting,
-    timeoutSetting,
-    currentLanguage,
-    hasToken,
-    hasWorkspace,
-    mentionHint,
-    firstPromptHint,
-  };
-}
-
-function formatOnboardingReport(key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
-  const lang = normalizeUiLanguage(language);
-  const snapshot = getOnboardingSnapshot(key, session, channel, lang);
-  if (lang === 'en') {
-    return [
-      '🧭 **Onboarding (Text)**',
-      `• For interactive steps, use \`${slashRef('onboarding')}\` (buttons + direct config on each step)`,
-      '',
-      '**1) Preflight check**',
-      `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
-      `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
-      `• cli: ${formatCliHealth(snapshot.cliHealth)}`,
-      `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
-      `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)} (${snapshot.profileSetting.source})`,
-      `• timeout setting: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)} (${snapshot.timeoutSetting.source})`,
-      '',
-      '**2) Access scope & security policy (effective now)**',
-      `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
-      `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
-      `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
-      `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'} (${snapshot.mentionHint})`,
-      `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
-      `• queued prompts now: ${snapshot.runtime.queued}`,
-      `• !config: ${formatConfigCommandStatus()}`,
-      '',
-      '**3) First run flow**',
-      `1. \`${slashRef('doctor')}\` or \`!doctor\` to verify health checks.`,
-      `2. \`${slashRef('status')}\` or \`!status\` to verify mode/model/workspace.`,
-      `3. \`${slashRef('setdir')} <path>\` or \`!setdir <path>\` to bind target project.`,
-      `4. Send your first task: ${snapshot.firstPromptHint}`,
-      `5. If backlog appears, check \`${slashRef('queue')}\` / \`!queue\`; use \`${slashRef('cancel')}\` / \`!abort\` when needed.`,
-      '',
-      '**4) Recommended defaults**',
-      '• Start with 1 channel + 1 admin account, then gradually open access.',
-      '• Keep `ENABLE_CONFIG_CMD=false`; if enabled, allowlist only required keys.',
-      '• Keep `safe` as default; switch to `dangerous` only in trusted environments.',
-      '',
-      `Quick re-check: \`${slashRef('doctor')}\``,
-    ].join('\n');
-  }
-  return [
-    '🧭 **Onboarding（文本版）**',
-    `• 交互分步版请使用 \`${slashRef('onboarding')}\`（每步可直接配置 + 上一步/下一步/完成）`,
-    '',
-    '**1) 安装自检（先看当前是否可跑）**',
-    `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
-    `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
-    `• cli: ${formatCliHealth(snapshot.cliHealth)}`,
-    `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
-    `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)}（${snapshot.profileSetting.source}）`,
-    `• timeout setting: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}（${snapshot.timeoutSetting.source}）`,
-    '',
-    '**2) 访问范围与安全策略（当前生效）**',
-    `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
-    `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
-    `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
-    `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}（${snapshot.mentionHint}）`,
-    `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
-    `• queued prompts now: ${snapshot.runtime.queued}`,
-    `• !config: ${formatConfigCommandStatus()}`,
-    '',
-    '**3) 首跑流程（按顺序）**',
-    `1. \`${slashRef('doctor')}\` 或 \`!doctor\`，确认健康检查通过。`,
-    `2. \`${slashRef('status')}\` 或 \`!status\`，确认 mode/model/workspace。`,
-    `3. \`${slashRef('setdir')} <path>\` 或 \`!setdir <path>\`，绑定目标项目目录。`,
-    `4. 发送第一条任务：${snapshot.firstPromptHint}`,
-    `5. 如有积压，用 \`${slashRef('queue')}\` / \`!queue\` 查看；必要时 \`${slashRef('cancel')}\` / \`!abort\`。`,
-    '',
-    '**4) 新用户默认建议**',
-    '• 先限制到 1 个频道 + 1 个管理员账号，再逐步放开。',
-    '• 保持 `ENABLE_CONFIG_CMD=false`；确实要开时仅白名单必要 key。',
-    '• 默认用 `safe`；仅在可信环境切到 `dangerous`。',
-    '',
-    `需要快速复查时可直接执行：\`${slashRef('doctor')}\``,
-  ].join('\n');
-}
-
-function normalizeOnboardingStep(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return 1;
-  return Math.max(1, Math.min(ONBOARDING_TOTAL_STEPS, Math.floor(n)));
-}
-
-function buildOnboardingButtonId(action, step, userId, value = '') {
-  const safeAction = String(action || '').trim().toLowerCase();
-  const safeStep = normalizeOnboardingStep(step);
-  const safeUserId = String(userId || '').trim();
-  const safeValue = String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]/g, '');
-  return safeValue
-    ? `onb:${safeAction}:${safeStep}:${safeUserId}:${safeValue}`
-    : `onb:${safeAction}:${safeStep}:${safeUserId}`;
-}
-
-function isOnboardingButtonId(customId) {
-  return /^onb:/.test(String(customId || ''));
-}
-
-function parseOnboardingButtonId(customId) {
-  const text = String(customId || '').trim();
-  const parts = text.split(':');
-  if (parts.length < 4 || parts[0] !== 'onb') return null;
-  const [, action, rawStep, userId, ...rest] = parts;
-  if (!['goto', 'refresh', 'done', 'set_lang', 'set_profile', 'set_timeout'].includes(action)) return null;
-  if (!/^[0-9]{5,32}$/.test(String(userId || ''))) return null;
-  return {
-    action,
-    step: normalizeOnboardingStep(rawStep),
-    userId,
-    value: String(rest.join(':') || '').trim().toLowerCase(),
-  };
-}
-
-function buildOnboardingConfigRow(step, userId, session = null, language = DEFAULT_UI_LANGUAGE) {
-  const lang = normalizeUiLanguage(language);
-  const current = normalizeOnboardingStep(step);
-  if (current === 1) {
-    const activeLanguage = getSessionLanguage(session);
-    return new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('set_lang', current, userId, 'zh'))
-        .setLabel('中文')
-        .setStyle(activeLanguage === 'zh' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('set_lang', current, userId, 'en'))
-        .setLabel('English')
-        .setStyle(activeLanguage === 'en' ? ButtonStyle.Primary : ButtonStyle.Secondary),
-    );
-  }
-
-  if (current === 2) {
-    const activeProfile = getEffectiveSecurityProfile(session).profile;
-    const options = ['auto', 'solo', 'team', 'public'];
-    return new ActionRowBuilder().addComponents(
-      ...options.map((profile) => new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('set_profile', current, userId, profile))
-        .setLabel(profile)
-        .setStyle(activeProfile === profile ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-    );
-  }
-
-  if (current === 3) {
-    const activeTimeoutMs = resolveTimeoutSetting(session).timeoutMs;
-    const presets = [
-      { value: 0, label: lang === 'en' ? 'off' : '关闭' },
-      { value: 30000, label: '30s' },
-      { value: 60000, label: '60s' },
-      { value: 120000, label: '120s' },
-    ];
-    return new ActionRowBuilder().addComponents(
-      ...presets.map((preset) => new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('set_timeout', current, userId, String(preset.value)))
-        .setLabel(preset.label)
-        .setStyle(activeTimeoutMs === preset.value ? ButtonStyle.Primary : ButtonStyle.Secondary)),
-    );
-  }
-
-  return null;
-}
-
-function buildOnboardingActionRows(step, userId, session = null, language = DEFAULT_UI_LANGUAGE) {
-  const lang = normalizeUiLanguage(language);
-  const current = normalizeOnboardingStep(step);
-  const previous = normalizeOnboardingStep(current - 1);
-  const next = normalizeOnboardingStep(current + 1);
-  const rows = [
-    new ActionRowBuilder().addComponents(
-      new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('goto', previous, userId))
-        .setLabel(lang === 'en' ? 'Previous' : '上一步')
-        .setStyle(ButtonStyle.Secondary)
-        .setDisabled(current <= 1),
-      new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('refresh', current, userId))
-        .setLabel(lang === 'en' ? 'Refresh' : '刷新')
-        .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('goto', next, userId))
-        .setLabel(lang === 'en' ? 'Next' : '下一步')
-        .setStyle(ButtonStyle.Primary)
-        .setDisabled(current >= ONBOARDING_TOTAL_STEPS),
-      new ButtonBuilder()
-        .setCustomId(buildOnboardingButtonId('done', current, userId))
-        .setLabel(lang === 'en' ? 'Done' : '完成')
-        .setStyle(ButtonStyle.Success),
-    ),
-  ];
-  const configRow = buildOnboardingConfigRow(current, userId, session, lang);
-  if (configRow) rows.push(configRow);
-  return rows;
-}
-
-function formatOnboardingStepReport(step, key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
-  const lang = normalizeUiLanguage(language);
-  const current = normalizeOnboardingStep(step);
-  const snapshot = getOnboardingSnapshot(key, session, channel, lang);
-  if (lang === 'en') {
-    switch (current) {
-      case 1:
-        return [
-          '🧭 **Onboarding 1/4: Preflight + Language**',
-          `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
-          `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
-          `• cli: ${formatCliHealth(snapshot.cliHealth)}`,
-          `• ui language (current): ${formatLanguageLabel(snapshot.currentLanguage)}`,
-          '',
-          'Choose language with buttons, then click "Next".',
-        ].join('\n');
-      case 2:
-        return [
-          '🧭 **Onboarding 2/4: Scope & Security Profile**',
-          `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
-          `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
-          `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
-          `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)} (${snapshot.profileSetting.source})`,
-          `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'} (${snapshot.mentionHint})`,
-          `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
-          `• queued prompts now: ${snapshot.runtime.queued}`,
-          '',
-          'Choose `auto/solo/team/public` with buttons, then click "Next".',
-        ].join('\n');
-      case 3:
-        return [
-          '🧭 **Onboarding 3/4: Timeout**',
-          `• runner timeout (current): ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)} (${snapshot.timeoutSetting.source})`,
-          `• quick presets: off / 30s / 60s / 120s`,
-          `• custom value: \`${slashRef('timeout')} <ms|off|status>\` or \`!timeout <ms|off|status>\``,
-          '',
-          'Choose a timeout preset with buttons, then click "Next".',
-        ].join('\n');
-      case 4:
-      default:
-        return [
-          '🧭 **Onboarding 4/4: First Run Checklist**',
-          `1. \`${slashRef('doctor')}\` or \`!doctor\` to verify health checks.`,
-          `2. \`${slashRef('status')}\` or \`!status\` to verify mode/model/workspace/profile/timeout.`,
-          `3. \`${slashRef('setdir')} <path>\` or \`!setdir <path>\` to bind project path.`,
-          `4. Send the first task: ${snapshot.firstPromptHint}`,
-          `5. Use \`${slashRef('queue')}\` / \`!queue\` for backlog, \`${slashRef('cancel')}\` / \`!abort\` to stop.`,
-          '',
-          `Current settings: language=${formatLanguageLabel(snapshot.currentLanguage)}, profile=${formatSecurityProfileLabel(snapshot.profileSetting.profile)}, timeout=${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}`,
-          '',
-          'Click "Done" when finished.',
-        ].join('\n');
-    }
-  }
-  switch (current) {
-    case 1:
-      return [
-        '🧭 **Onboarding 1/4：安装自检 + 语言设置**',
-        `• DISCORD_TOKEN: ${snapshot.hasToken ? '✅ loaded' : '❌ missing'}`,
-        `• WORKSPACE_ROOT: ${snapshot.hasWorkspace ? `✅ \`${WORKSPACE_ROOT}\`` : '❌ missing'}`,
-        `• cli: ${formatCliHealth(snapshot.cliHealth)}`,
-        `• ui language（当前）：${formatLanguageLabel(snapshot.currentLanguage)}`,
-        '',
-        '请用按钮选择语言，然后点「下一步」。',
-      ].join('\n');
-    case 2:
-      return [
-        '🧭 **Onboarding 2/4：访问范围与安全策略**',
-        `• ALLOWED_CHANNEL_IDS: ${ALLOWED_CHANNEL_IDS ? `${ALLOWED_CHANNEL_IDS.size} configured` : '(all channels)'}`,
-        `• ALLOWED_USER_IDS: ${ALLOWED_USER_IDS ? `${ALLOWED_USER_IDS.size} configured` : '(all users)'}`,
-        `• security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
-        `• profile setting: ${formatSecurityProfileLabel(snapshot.profileSetting.profile)}（${snapshot.profileSetting.source}）`,
-        `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}（${snapshot.mentionHint}）`,
-        `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
-        `• queued prompts now: ${snapshot.runtime.queued}`,
-        '',
-        '请用按钮选择 `auto/solo/team/public`，然后点「下一步」。',
-      ].join('\n');
-    case 3:
-      return [
-        '🧭 **Onboarding 3/4：超时设置**',
-        `• runner timeout（当前）：${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}（${snapshot.timeoutSetting.source}）`,
-        '• 快捷预设：off / 30s / 60s / 120s',
-        `• 自定义值：\`${slashRef('timeout')} <毫秒|off|status>\` 或 \`!timeout <毫秒|off|status>\``,
-        '',
-        '请用按钮选择 timeout 预设，然后点「下一步」。',
-      ].join('\n');
-    case 4:
-    default:
-      return [
-        '🧭 **Onboarding 4/4：首跑流程（5 步）**',
-        `1. \`${slashRef('doctor')}\` 或 \`!doctor\`，确认健康检查通过。`,
-        `2. \`${slashRef('status')}\` 或 \`!status\`，确认 mode/model/workspace/profile/timeout。`,
-        `3. \`${slashRef('setdir')} <path>\` 或 \`!setdir <path>\`，绑定目标项目目录。`,
-        `4. 发送第一条任务：${snapshot.firstPromptHint}`,
-        `5. 如有积压，用 \`${slashRef('queue')}\` / \`!queue\` 查看；必要时 \`${slashRef('cancel')}\` / \`!abort\`。`,
-        '',
-        `当前设置：language=${formatLanguageLabel(snapshot.currentLanguage)}，profile=${formatSecurityProfileLabel(snapshot.profileSetting.profile)}，timeout=${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}`,
-        '完成后点击「完成」关闭引导面板。',
-      ].join('\n');
-  }
-}
-
-function formatOnboardingDoneReport(key, session = null, channel = null, language = DEFAULT_UI_LANGUAGE) {
-  const lang = normalizeUiLanguage(language);
-  const snapshot = getOnboardingSnapshot(key, session, channel, lang);
-  if (lang === 'en') {
-    return [
-      '✅ **Onboarding Completed**',
-      `• active security profile: ${formatSecurityProfileDisplay(snapshot.security)}`,
-      `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}`,
-      `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
-      `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
-      `• runner timeout: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)} (${snapshot.timeoutSetting.source})`,
-      '',
-      `You can use: \`${slashRef('doctor')}\`, \`${slashRef('status')}\`, \`${slashRef('queue')}\``,
-    ].join('\n');
-  }
-  return [
-    '✅ **Onboarding 已完成**',
-    `• 当前安全策略：${formatSecurityProfileDisplay(snapshot.security)}`,
-    `• mention only: ${snapshot.security.mentionOnly ? 'on' : 'off'}`,
-    `• queue limit: ${formatQueueLimit(snapshot.security.maxQueuePerChannel)}`,
-    `• ui language: ${formatLanguageLabel(snapshot.currentLanguage)}`,
-    `• runner timeout: ${formatTimeoutLabel(snapshot.timeoutSetting.timeoutMs)}（${snapshot.timeoutSetting.source}）`,
-    '',
-    `后续可直接使用：\`${slashRef('doctor')}\`、\`${slashRef('status')}\`、\`${slashRef('queue')}\``,
-  ].join('\n');
-}
-
-async function handleOnboardingButtonInteraction(interaction) {
-  const parsed = parseOnboardingButtonId(interaction.customId);
-  if (!parsed) return;
-  const key = interaction.channelId;
-  const session = key ? getSession(key) : null;
-  const language = getSessionLanguage(session);
-
-  if (parsed.userId !== interaction.user.id) {
-    await interaction.reply({
-      content: language === 'en'
-        ? `This onboarding panel is only controllable by its creator. Run \`${slashRef('onboarding')}\` to create your own panel.`
-        : `这个引导面板只对发起者可操作。请执行 \`${slashRef('onboarding')}\` 创建你自己的面板。`,
-      flags: 64,
-    });
-    return;
-  }
-
-  if (!key) {
-    await interaction.reply({ content: '❌ 无法识别当前频道。', flags: 64 });
-    return;
-  }
-
-  if (!isOnboardingEnabled(session)) {
-    await interaction.update({
-      content: formatOnboardingDisabledMessage(language),
-      components: [],
-    });
-    return;
-  }
-
-  if (parsed.action === 'set_lang') {
-    const selectedLanguage = parseUiLanguageInput(parsed.value);
-    if (selectedLanguage) {
-      session.language = selectedLanguage;
-      saveDb();
-    }
-  }
-
-  if (parsed.action === 'set_profile') {
-    const profile = parseSecurityProfileInput(parsed.value);
-    if (profile) {
-      session.securityProfile = profile;
-      saveDb();
-    }
-  }
-
-  if (parsed.action === 'set_timeout') {
-    const timeoutAction = parseTimeoutConfigAction(parsed.value);
-    if (timeoutAction?.type === 'set') {
-      session.timeoutMs = timeoutAction.timeoutMs;
-      saveDb();
-    }
-  }
-
-  const currentLanguage = getSessionLanguage(session);
-
-  if (parsed.action === 'done') {
-    await interaction.update({
-      content: formatOnboardingDoneReport(key, session, interaction.channel, currentLanguage),
-      components: [],
-    });
-    return;
-  }
-
-  await interaction.update({
-    content: formatOnboardingStepReport(parsed.step, key, session, interaction.channel, currentLanguage),
-    components: buildOnboardingActionRows(parsed.step, interaction.user.id, session, currentLanguage),
-  });
-}
 
 function createProgressReporter({
   message,
@@ -3499,6 +2521,46 @@ async function handlePrompt(message, key, prompt, channelState) {
   }
 }
 
+({ enqueuePrompt } = createChannelQueue({
+  getChannelState,
+  getSession,
+  resolveSecurityContext,
+  safeReply,
+  safeError,
+  getCurrentUserId: () => client?.user?.id,
+  handlePrompt,
+}));
+
+const { startSessionProgressBridge } = createSessionProgressBridgeFactory({
+  normalizeProvider,
+  extractRawProgressTextFromEvent: extractRawProgressTextFromEventBase,
+  findLatestRolloutFileBySessionId,
+  findLatestClaudeSessionFileBySessionId,
+});
+
+({ runCodex } = createRunnerExecutor({
+  debugEvents: DEBUG_EVENTS,
+  spawnEnv: SPAWN_ENV,
+  defaultTimeoutMs: CODEX_TIMEOUT_MS,
+  defaultModel: DEFAULT_MODEL,
+  ensureDir,
+  ensureGitRepo,
+  normalizeProvider,
+  getSessionProvider,
+  getProviderBin,
+  getSessionId,
+  resolveTimeoutSetting,
+  resolveCompactStrategySetting,
+  resolveCompactEnabledSetting,
+  resolveNativeCompactTokenLimitSetting,
+  normalizeTimeoutMs,
+  safeError,
+  stopChildProcess,
+  startSessionProgressBridge,
+  extractAgentMessageText,
+  isFinalAnswerLikeAgentMessage,
+}));
+
 function shouldCompactSession(session) {
   const compactSetting = resolveCompactStrategySetting(session);
   const enabledSetting = resolveCompactEnabledSetting(session);
@@ -3562,674 +2624,6 @@ function buildPromptFromCompactedContext(summary, userPrompt) {
   ].join('\n');
 }
 
-async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, onEvent, onLog }) {
-  ensureDir(workspaceDir);
-  ensureGitRepo(workspaceDir);
-
-  const provider = getSessionProvider(session);
-  const notes = [];
-  const args = buildRunnerArgs({ provider, session, workspaceDir, prompt });
-  const timeoutMs = resolveTimeoutSetting(session).timeoutMs;
-  const bin = getProviderBin(provider);
-
-  if (DEBUG_EVENTS) {
-    console.log(`Running ${provider}:`, [bin, ...args].join(' '));
-  }
-
-  const {
-    ok,
-    exitCode,
-    signal,
-    messages,
-    finalAnswerMessages,
-    reasonings,
-    usage,
-    threadId,
-    logs,
-    error,
-    timedOut,
-    cancelled,
-  } = await spawnRunner({ provider, args, cwd: workspaceDir, workspaceDir }, {
-    onSpawn,
-    wasCancelled,
-    onEvent,
-    onLog,
-    timeoutMs,
-  });
-
-  return {
-    ok,
-    exitCode,
-    signal,
-    messages,
-    finalAnswerMessages,
-    reasonings,
-    usage,
-    threadId,
-    logs,
-    error,
-    timedOut,
-    cancelled,
-    notes,
-  };
-}
-
-function buildRunnerArgs({ provider, session, workspaceDir, prompt }) {
-  return normalizeProvider(provider) === 'claude'
-    ? buildClaudeArgs({ session, workspaceDir, prompt })
-    : buildCodexArgs({ session, workspaceDir, prompt });
-}
-
-function buildCodexArgs({ session, workspaceDir, prompt }) {
-  const modeFlag = session.mode === 'dangerous'
-    ? '--dangerously-bypass-approvals-and-sandbox'
-    : '--full-auto';
-
-  const model = session.model || DEFAULT_MODEL;
-  const effort = session.effort;
-  const extraConfigs = session.configOverrides || [];
-  const compactSetting = resolveCompactStrategySetting(session);
-  const compactEnabled = resolveCompactEnabledSetting(session);
-  const nativeLimit = resolveNativeCompactTokenLimitSetting(session);
-
-  const common = [];
-  if (model) common.push('-m', model);
-  if (effort) common.push('-c', `model_reasoning_effort="${effort}"`);
-  if (compactSetting.strategy === 'native' && compactEnabled.enabled) {
-    common.push('-c', `model_auto_compact_token_limit=${nativeLimit.tokens}`);
-  }
-  for (const cfg of extraConfigs) common.push('-c', cfg);
-
-  const sessionId = getSessionId(session);
-  if (sessionId) {
-    return ['exec', 'resume', '--json', modeFlag, ...common, sessionId, prompt];
-  }
-
-  return ['exec', '--json', '--skip-git-repo-check', modeFlag, '-C', workspaceDir, ...common, prompt];
-}
-
-function buildClaudeArgs({ session, workspaceDir, prompt }) {
-  const args = [
-    '-p',
-    '--verbose',
-    '--output-format', 'stream-json',
-    '--include-partial-messages',
-    '--add-dir', workspaceDir,
-  ];
-  const model = session.model || DEFAULT_MODEL;
-  const effort = session.effort;
-  const sessionId = getSessionId(session);
-
-  if (model) args.push('--model', model);
-  if (effort) args.push('--effort', effort);
-
-  if (session.mode === 'dangerous') {
-    args.push('--dangerously-skip-permissions');
-  } else {
-    args.push('--permission-mode', 'acceptEdits');
-  }
-
-  if (sessionId) args.push('--resume', sessionId);
-  else args.push('--session-id', randomUUID());
-
-  args.push('--allowedTools', 'default', '--', prompt);
-  return args;
-}
-
-function spawnRunner({ provider, args, cwd, workspaceDir }, options = {}) {
-  return new Promise((resolve) => {
-    const bin = getProviderBin(provider);
-    const child = spawn(bin, args, {
-      cwd,
-      env: SPAWN_ENV,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    options.onSpawn?.(child);
-
-    let stdoutBuf = '';
-    let stderrBuf = '';
-
-    const messages = [];
-    const finalAnswerMessages = [];
-    const reasonings = [];
-    const logs = [];
-    let usage = null;
-    let threadId = null;
-    let resolved = false;
-    let timedOut = false;
-    let progressBridgeThreadId = null;
-    let stopSessionProgressBridge = null;
-    const timeoutMs = normalizeTimeoutMs(options.timeoutMs, CODEX_TIMEOUT_MS);
-    const timeout = timeoutMs > 0
-      ? setTimeout(() => {
-        timedOut = true;
-        logs.push(`Timeout after ${timeoutMs}ms`);
-        stopChildProcess(child);
-      }, timeoutMs)
-      : null;
-
-    const stopBridges = () => {
-      if (typeof stopSessionProgressBridge === 'function') {
-        try {
-          stopSessionProgressBridge();
-        } catch {
-          // ignore bridge teardown failures
-        }
-      }
-      stopSessionProgressBridge = null;
-      progressBridgeThreadId = null;
-    };
-
-    const ensureSessionProgressBridge = (nextThreadId) => {
-      const id = String(nextThreadId || '').trim();
-      if (!id) return;
-      if (typeof options.onEvent !== 'function') return;
-      if (id === progressBridgeThreadId && typeof stopSessionProgressBridge === 'function') return;
-
-      stopBridges();
-      stopSessionProgressBridge = startSessionProgressBridge({
-        provider,
-        threadId: id,
-        workspaceDir,
-        onEvent: options.onEvent,
-      });
-      progressBridgeThreadId = id;
-    };
-
-    const consumeLine = (line, source) => {
-      const trimmed = line.trim();
-      if (!trimmed) return;
-
-      if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-        try {
-          const ev = JSON.parse(trimmed);
-          if (DEBUG_EVENTS) console.log('[event]', ev.type, ev);
-          handleEvent(ev);
-          options.onEvent?.(ev);
-          return;
-        } catch {
-          // fallthrough
-        }
-      }
-
-      // Ignore known noisy Codex rollout logs.
-      if (provider === 'codex' && trimmed.includes('state db missing rollout path for thread')) return;
-      if (source === 'stderr' || DEBUG_EVENTS) logs.push(trimmed);
-      options.onLog?.(trimmed, source);
-    };
-
-    const onData = (chunk, source) => {
-      let buf = source === 'stdout' ? stdoutBuf : stderrBuf;
-      buf += chunk.toString('utf8');
-
-      const lines = buf.split('\n');
-      buf = lines.pop() ?? '';
-      for (const line of lines) consumeLine(line, source);
-
-      if (source === 'stdout') stdoutBuf = buf;
-      else stderrBuf = buf;
-    };
-
-    const flushRemainders = () => {
-      if (stdoutBuf.trim()) consumeLine(stdoutBuf, 'stdout');
-      if (stderrBuf.trim()) consumeLine(stderrBuf, 'stderr');
-    };
-
-    const handleEvent = (ev) => {
-      const state = { messages, finalAnswerMessages, reasonings, logs, usage, threadId };
-      if (normalizeProvider(provider) === 'claude') {
-        handleClaudeRunnerEvent(ev, state, ensureSessionProgressBridge);
-      } else {
-        handleCodexRunnerEvent(ev, state, ensureSessionProgressBridge);
-      }
-      usage = state.usage;
-      threadId = state.threadId;
-    };
-
-    child.stdout.on('data', (chunk) => onData(chunk, 'stdout'));
-    child.stderr.on('data', (chunk) => onData(chunk, 'stderr'));
-
-    child.on('error', (err) => {
-      if (resolved) return;
-      resolved = true;
-      if (timeout) clearTimeout(timeout);
-      stopBridges();
-      if (err?.code === 'ENOENT') {
-        logs.push(`Command not found: ${bin}`);
-      }
-      resolve({
-        ok: false,
-        exitCode: null,
-        signal: null,
-        messages,
-        finalAnswerMessages,
-        reasonings,
-        usage,
-        threadId,
-        logs,
-        error: safeError(err),
-        timedOut,
-        cancelled: Boolean(options.wasCancelled?.()),
-      });
-    });
-
-    child.on('close', (exitCode, signal) => {
-      if (resolved) return;
-      resolved = true;
-      if (timeout) clearTimeout(timeout);
-      stopBridges();
-      flushRemainders();
-
-      const ok = exitCode === 0;
-      const cancelled = !ok && Boolean(options.wasCancelled?.());
-      const error = ok
-        ? null
-        : timedOut
-          ? `timeout after ${timeoutMs}ms`
-          : cancelled
-            ? `cancelled (${signal || `exit=${exitCode}`})`
-            : `exit=${exitCode}${signal ? ` signal=${signal}` : ''}`;
-
-      resolve({
-        ok,
-        exitCode,
-        signal,
-        messages,
-        finalAnswerMessages,
-        reasonings,
-        usage,
-        threadId,
-        logs,
-        error,
-        timedOut,
-        cancelled,
-      });
-    });
-  });
-}
-
-function normalizeRunnerEventType(value) {
-  return String(value || '').trim().toLowerCase().replace(/[./-]/g, '_');
-}
-
-function firstNonEmptyString(...values) {
-  for (const value of values) {
-    const text = String(value || '').trim();
-    if (text) return text;
-  }
-  return '';
-}
-
-function extractRunnerSessionId(ev) {
-  return firstNonEmptyString(
-    ev?.thread_id,
-    ev?.threadId,
-    ev?.session_id,
-    ev?.sessionId,
-    ev?.payload?.thread_id,
-    ev?.payload?.threadId,
-    ev?.payload?.session_id,
-    ev?.payload?.sessionId,
-    ev?.message?.thread_id,
-    ev?.message?.threadId,
-    ev?.message?.session_id,
-    ev?.message?.sessionId,
-    ev?.result?.thread_id,
-    ev?.result?.threadId,
-    ev?.result?.session_id,
-    ev?.result?.sessionId,
-  ) || null;
-}
-
-function pushMessageParts(state, item) {
-  const text = extractAgentMessageText(item);
-  if (!text) return;
-  state.messages.push(text);
-  if (isFinalAnswerLikeAgentMessage(item)) {
-    state.finalAnswerMessages.push(text);
-  }
-}
-
-function handleCodexRunnerEvent(ev, state, ensureSessionProgressBridge) {
-  switch (ev.type) {
-    case 'thread.started':
-      state.threadId = ev.thread_id || state.threadId;
-      ensureSessionProgressBridge(state.threadId);
-      break;
-    case 'item.completed': {
-      const item = ev.item || {};
-      if (item.type === 'agent_message') {
-        pushMessageParts(state, item);
-      }
-      if (item.type === 'reasoning' && item.text) state.reasonings.push(item.text.trim());
-      break;
-    }
-    case 'turn.completed':
-      state.usage = ev.usage || state.usage;
-      break;
-    case 'error':
-      state.logs.push(typeof ev.error === 'string' ? ev.error : JSON.stringify(ev.error));
-      break;
-    default:
-      break;
-  }
-}
-
-function handleClaudeRunnerEvent(ev, state, ensureSessionProgressBridge) {
-  const type = normalizeRunnerEventType(ev?.type || '');
-  const sessionId = extractRunnerSessionId(ev);
-  if (sessionId) {
-    state.threadId = sessionId;
-    ensureSessionProgressBridge(sessionId);
-  }
-
-  if (type === 'system_init' || type === 'init') return;
-
-  if (type === 'assistant' || type === 'assistant_message') {
-    const item = ev?.message && typeof ev.message === 'object' ? ev.message : ev;
-    pushMessageParts(state, item);
-    state.usage = item?.usage || ev?.usage || state.usage;
-    return;
-  }
-
-  if (type === 'result') {
-    state.usage = ev?.usage || ev?.result?.usage || state.usage;
-    const resultText = firstNonEmptyString(
-      typeof ev?.result === 'string' ? ev.result : '',
-      typeof ev?.response === 'string' ? ev.response : '',
-      typeof ev?.content === 'string' ? ev.content : '',
-    );
-    if (resultText && !state.finalAnswerMessages.length) {
-      pushMessageParts(state, { type: 'agent_message', phase: 'final_answer', text: resultText });
-    }
-    if (ev?.subtype === 'error' || ev?.is_error) {
-      state.logs.push(firstNonEmptyString(ev?.error, ev?.message, JSON.stringify(ev?.result || 'error')) || 'Claude result error');
-    }
-    return;
-  }
-
-  if (type.includes('reasoning')) {
-    const text = extractAgentMessageText(ev?.message && typeof ev.message === 'object' ? ev.message : ev);
-    if (text) state.reasonings.push(text);
-    return;
-  }
-
-  if (type === 'error') {
-    state.logs.push(typeof ev.error === 'string' ? ev.error : JSON.stringify(ev.error));
-  }
-}
-
-function startSessionProgressBridge({ provider, threadId, workspaceDir, onEvent }) {
-  return normalizeProvider(provider) === 'claude'
-    ? startClaudeSessionProgressBridge({ threadId, workspaceDir, onEvent })
-    : startCodexSessionProgressBridge({ threadId, onEvent });
-}
-
-function startCodexSessionProgressBridge({ threadId, onEvent }) {
-  const sessionId = String(threadId || '').trim();
-  if (!sessionId || typeof onEvent !== 'function') return () => {};
-
-  const sessionsDir = getCodexSessionsDir();
-  if (!sessionsDir || !fs.existsSync(sessionsDir)) return () => {};
-
-  const bridgeStartedAtMs = Date.now();
-  const minMtimeMs = bridgeStartedAtMs - 2 * 60 * 1000;
-  const dedupeKeys = [];
-  const dedupeSet = new Set();
-
-  let stopped = false;
-  let rolloutFile = null;
-  let rolloutFileMtimeMs = 0;
-  let offset = 0;
-  let remainder = '';
-  let pollTimer = null;
-  let lastScanAt = 0;
-
-  const rememberKey = (key) => {
-    if (!key || dedupeSet.has(key)) return false;
-    dedupeSet.add(key);
-    dedupeKeys.push(key);
-    if (dedupeKeys.length > 500) {
-      const stale = dedupeKeys.shift();
-      if (stale) dedupeSet.delete(stale);
-    }
-    return true;
-  };
-
-  const handleSessionLine = (line) => {
-    const raw = String(line || '').trim();
-    if (!raw || !raw.startsWith('{') || !raw.endsWith('}')) return;
-
-    let ev = null;
-    try {
-      ev = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (!ev || typeof ev !== 'object') return;
-
-    const text = extractRawProgressTextFromEventBase(ev);
-    if (!text) return;
-    const key = [
-      ev.timestamp || '',
-      ev.type || '',
-      ev.payload?.type || '',
-      ev.payload?.phase || '',
-      text,
-    ].join('|');
-    if (!rememberKey(key)) return;
-    onEvent(ev);
-  };
-
-  const consumeChunk = (chunk) => {
-    if (!chunk) return;
-    remainder += chunk;
-    const lines = remainder.split('\n');
-    remainder = lines.pop() ?? '';
-    for (const line of lines) handleSessionLine(line);
-  };
-
-  const readNewTail = () => {
-    if (!rolloutFile) return;
-
-    let stat = null;
-    try {
-      stat = fs.statSync(rolloutFile);
-    } catch {
-      rolloutFile = null;
-      offset = 0;
-      remainder = '';
-      return;
-    }
-    if (!stat || !stat.isFile()) return;
-    if (stat.size < offset) {
-      offset = 0;
-      remainder = '';
-    }
-    if (stat.size === offset) return;
-
-    const bytesToRead = stat.size - offset;
-    if (bytesToRead <= 0) return;
-
-    const fd = fs.openSync(rolloutFile, 'r');
-    try {
-      const buf = Buffer.allocUnsafe(bytesToRead);
-      const readBytes = fs.readSync(fd, buf, 0, bytesToRead, offset);
-      offset += readBytes;
-      consumeChunk(buf.toString('utf8', 0, readBytes));
-    } finally {
-      fs.closeSync(fd);
-    }
-  };
-
-  const resolveRolloutFile = (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastScanAt < 2500) return false;
-    lastScanAt = now;
-
-    const match = findLatestRolloutFileBySessionId(sessionId, minMtimeMs);
-    if (!match) return false;
-    const nextPath = String(match.file || '');
-    if (!nextPath) return false;
-    if (nextPath === rolloutFile) return true;
-
-    rolloutFile = match.file;
-    rolloutFileMtimeMs = Number(match.mtimeMs) || 0;
-    offset = rolloutFileMtimeMs < bridgeStartedAtMs
-      ? Math.max(0, Number(match.sizeBytes) || 0)
-      : 0;
-    remainder = '';
-    readNewTail();
-    return true;
-  };
-
-  const poll = () => {
-    if (stopped) return;
-    if (!resolveRolloutFile(!rolloutFile) && !rolloutFile) return;
-    readNewTail();
-  };
-
-  pollTimer = setInterval(poll, 700);
-  pollTimer.unref?.();
-  poll();
-
-  return () => {
-    stopped = true;
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = null;
-  };
-}
-
-function startClaudeSessionProgressBridge({ threadId, workspaceDir, onEvent }) {
-  const sessionId = String(threadId || '').trim();
-  if (!sessionId || typeof onEvent !== 'function') return () => {};
-
-  const projectsRoot = getClaudeProjectsDir();
-  if (!projectsRoot || !fs.existsSync(projectsRoot)) return () => {};
-
-  const bridgeStartedAtMs = Date.now();
-  const minMtimeMs = bridgeStartedAtMs - 2 * 60 * 1000;
-  const dedupeKeys = [];
-  const dedupeSet = new Set();
-
-  let stopped = false;
-  let sessionFile = null;
-  let sessionFileMtimeMs = 0;
-  let offset = 0;
-  let remainder = '';
-  let pollTimer = null;
-  let lastScanAt = 0;
-
-  const rememberKey = (key) => {
-    if (!key || dedupeSet.has(key)) return false;
-    dedupeSet.add(key);
-    dedupeKeys.push(key);
-    if (dedupeKeys.length > 500) {
-      const stale = dedupeKeys.shift();
-      if (stale) dedupeSet.delete(stale);
-    }
-    return true;
-  };
-
-  const handleSessionLine = (line) => {
-    const raw = String(line || '').trim();
-    if (!raw || !raw.startsWith('{') || !raw.endsWith('}')) return;
-
-    let ev = null;
-    try {
-      ev = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (!ev || typeof ev !== 'object') return;
-    if (String(ev.type || '').toLowerCase() === 'user') return;
-
-    const text = extractRawProgressTextFromEventBase(ev);
-    if (!text) return;
-    const key = [ev.timestamp || '', ev.type || '', ev.sessionId || '', text].join('|');
-    if (!rememberKey(key)) return;
-    onEvent(ev);
-  };
-
-  const consumeChunk = (chunk) => {
-    if (!chunk) return;
-    remainder += chunk;
-    const lines = remainder.split('\n');
-    remainder = lines.pop() ?? '';
-    for (const line of lines) handleSessionLine(line);
-  };
-
-  const readNewTail = () => {
-    if (!sessionFile) return;
-
-    let stat = null;
-    try {
-      stat = fs.statSync(sessionFile);
-    } catch {
-      sessionFile = null;
-      offset = 0;
-      remainder = '';
-      return;
-    }
-    if (!stat || !stat.isFile()) return;
-    if (stat.size < offset) {
-      offset = 0;
-      remainder = '';
-    }
-    if (stat.size === offset) return;
-
-    const bytesToRead = stat.size - offset;
-    if (bytesToRead <= 0) return;
-
-    const fd = fs.openSync(sessionFile, 'r');
-    try {
-      const buf = Buffer.allocUnsafe(bytesToRead);
-      const readBytes = fs.readSync(fd, buf, 0, bytesToRead, offset);
-      offset += readBytes;
-      consumeChunk(buf.toString('utf8', 0, readBytes));
-    } finally {
-      fs.closeSync(fd);
-    }
-  };
-
-  const resolveSessionFile = (force = false) => {
-    const now = Date.now();
-    if (!force && now - lastScanAt < 2500) return false;
-    lastScanAt = now;
-
-    const match = findLatestClaudeSessionFileBySessionId(sessionId, workspaceDir, minMtimeMs);
-    if (!match) return false;
-    const nextPath = String(match.file || '');
-    if (!nextPath) return false;
-    if (nextPath === sessionFile) return true;
-
-    sessionFile = match.file;
-    sessionFileMtimeMs = Number(match.mtimeMs) || 0;
-    offset = sessionFileMtimeMs < bridgeStartedAtMs
-      ? Math.max(0, Number(match.sizeBytes) || 0)
-      : 0;
-    remainder = '';
-    readNewTail();
-    return true;
-  };
-
-  const poll = () => {
-    if (stopped) return;
-    if (!resolveSessionFile(!sessionFile) && !sessionFile) return;
-    readNewTail();
-  };
-
-  pollTimer = setInterval(poll, 700);
-  pollTimer.unref?.();
-  poll();
-
-  return () => {
-    stopped = true;
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = null;
-  };
-}
-
 function composeResultText(result, session) {
   const sections = [];
 
@@ -4262,175 +2656,6 @@ function composeResultText(result, session) {
   }
 
   return sections.join('\n\n').trim();
-}
-
-function getSession(key) {
-  db.threads ||= {};
-  if (!db.threads[key]) {
-    db.threads[key] = {
-      workspaceDir: null,
-      provider: DEFAULT_PROVIDER,
-      runnerSessionId: null,
-      codexThreadId: null,
-      lastInputTokens: null,
-      model: null,
-      effort: null,
-      mode: DEFAULT_MODE,
-      language: DEFAULT_UI_LANGUAGE,
-      onboardingEnabled: ONBOARDING_ENABLED_BY_DEFAULT,
-      securityProfile: null,
-      timeoutMs: null,
-      processLines: null,
-      compactStrategy: null,
-      compactEnabled: null,
-      compactThresholdTokens: null,
-      nativeCompactTokenLimit: null,
-      configOverrides: [],
-      updatedAt: new Date().toISOString(),
-    };
-    saveDb();
-  }
-  const s = db.threads[key];
-  // migrate old sessions
-  let migrated = false;
-  if (BOT_PROVIDER && s.provider !== BOT_PROVIDER) {
-    s.provider = BOT_PROVIDER;
-    migrated = true;
-  }
-  if (s.provider === undefined) {
-    s.provider = DEFAULT_PROVIDER;
-    migrated = true;
-  }
-  const normalizedProvider = normalizeProvider(s.provider);
-  if (s.provider !== normalizedProvider) {
-    s.provider = normalizedProvider;
-    migrated = true;
-  }
-  if (s.runnerSessionId === undefined) {
-    s.runnerSessionId = s.codexThreadId || null;
-    migrated = true;
-  }
-  const normalizedSessionId = getSessionId(s);
-  if (s.runnerSessionId !== normalizedSessionId || s.codexThreadId !== normalizedSessionId) {
-    s.runnerSessionId = normalizedSessionId;
-    s.codexThreadId = normalizedSessionId;
-    migrated = true;
-  }
-  if (s.effort === undefined) {
-    s.effort = null;
-    migrated = true;
-  }
-  if (s.configOverrides === undefined) {
-    s.configOverrides = [];
-    migrated = true;
-  }
-  if (s.name === undefined) {
-    s.name = null;
-    migrated = true;
-  }
-  if (s.lastInputTokens === undefined) {
-    s.lastInputTokens = null;
-    migrated = true;
-  }
-  if (s.language === undefined) {
-    s.language = DEFAULT_UI_LANGUAGE;
-    migrated = true;
-  }
-  if (s.onboardingEnabled === undefined) {
-    s.onboardingEnabled = ONBOARDING_ENABLED_BY_DEFAULT;
-    migrated = true;
-  }
-  if (s.securityProfile === undefined) {
-    s.securityProfile = null;
-    migrated = true;
-  }
-  if (s.timeoutMs === undefined) {
-    s.timeoutMs = null;
-    migrated = true;
-  }
-  if (s.processLines === undefined) {
-    s.processLines = null;
-    migrated = true;
-  }
-  if (s.compactStrategy === undefined) {
-    s.compactStrategy = null;
-    migrated = true;
-  }
-  if (s.compactEnabled === undefined) {
-    s.compactEnabled = null;
-    migrated = true;
-  }
-  if (s.compactThresholdTokens === undefined) {
-    s.compactThresholdTokens = null;
-    migrated = true;
-  }
-  if (s.nativeCompactTokenLimit === undefined) {
-    s.nativeCompactTokenLimit = null;
-    migrated = true;
-  }
-  const normalizedLanguage = normalizeUiLanguage(s.language);
-  if (s.language !== normalizedLanguage) {
-    s.language = normalizedLanguage;
-    migrated = true;
-  }
-  const normalizedSecurityProfile = normalizeSessionSecurityProfile(s.securityProfile);
-  if (s.securityProfile !== normalizedSecurityProfile) {
-    s.securityProfile = normalizedSecurityProfile;
-    migrated = true;
-  }
-  const normalizedTimeoutMs = normalizeSessionTimeoutMs(s.timeoutMs);
-  if (s.timeoutMs !== normalizedTimeoutMs) {
-    s.timeoutMs = normalizedTimeoutMs;
-    migrated = true;
-  }
-  const normalizedProcessLines = normalizeSessionProcessLines(s.processLines);
-  if (s.processLines !== normalizedProcessLines) {
-    s.processLines = normalizedProcessLines;
-    migrated = true;
-  }
-  const normalizedCompactStrategy = normalizeSessionCompactStrategy(s.compactStrategy);
-  if (s.compactStrategy !== normalizedCompactStrategy) {
-    s.compactStrategy = normalizedCompactStrategy;
-    migrated = true;
-  }
-  const normalizedCompactEnabled = normalizeSessionCompactEnabled(s.compactEnabled);
-  if (s.compactEnabled !== normalizedCompactEnabled) {
-    s.compactEnabled = normalizedCompactEnabled;
-    migrated = true;
-  }
-  const normalizedCompactThresholdTokens = normalizeSessionCompactTokenLimit(s.compactThresholdTokens);
-  if (s.compactThresholdTokens !== normalizedCompactThresholdTokens) {
-    s.compactThresholdTokens = normalizedCompactThresholdTokens;
-    migrated = true;
-  }
-  const normalizedNativeCompactTokenLimit = normalizeSessionCompactTokenLimit(s.nativeCompactTokenLimit);
-  if (s.nativeCompactTokenLimit !== normalizedNativeCompactTokenLimit) {
-    s.nativeCompactTokenLimit = normalizedNativeCompactTokenLimit;
-    migrated = true;
-  }
-  s.updatedAt = new Date().toISOString();
-  if (migrated) saveDb();
-  return s;
-}
-
-function ensureWorkspace(session, key) {
-  if (!session.workspaceDir) {
-    session.workspaceDir = path.join(WORKSPACE_ROOT, key);
-    saveDb();
-  }
-  ensureDir(session.workspaceDir);
-  ensureGitRepo(session.workspaceDir);
-  return session.workspaceDir;
-}
-
-function ensureGitRepo(dir) {
-  const check = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: dir,
-    stdio: 'ignore',
-  });
-  if (check.status === 0) return;
-
-  spawnSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
 }
 
 function autoRepairProxyEnv(envFilePath) {
@@ -4825,26 +3050,6 @@ function formatBotModeLabel() {
   return `locked to \`${BOT_PROVIDER}\` (${getProviderDisplayName(BOT_PROVIDER)})`;
 }
 
-function slashName(base) {
-  const cmd = String(base || '').trim().toLowerCase();
-  if (!SLASH_PREFIX) return cmd;
-
-  const prefix = `${SLASH_PREFIX}_`;
-  const maxBaseLen = Math.max(1, 32 - prefix.length);
-  return `${prefix}${cmd.slice(0, maxBaseLen)}`;
-}
-
-function normalizeSlashCommandName(name) {
-  const raw = String(name || '').trim().toLowerCase();
-  if (!SLASH_PREFIX) return raw;
-  const prefix = `${SLASH_PREFIX}_`;
-  return raw.startsWith(prefix) ? raw.slice(prefix.length) : raw;
-}
-
-function slashRef(base) {
-  return `/${slashName(base)}`;
-}
-
 function isAllowedUser(userId) {
   if (!ALLOWED_USER_IDS) return true;
   return ALLOWED_USER_IDS.has(userId);
@@ -4922,10 +3127,6 @@ async function isAllowedInteractionChannel(interaction) {
 
   const parentId = channel.isThread?.() ? channel.parentId : null;
   return Boolean(parentId && ALLOWED_CHANNEL_IDS.has(parentId));
-}
-
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true });
 }
 
 function listRecentSessions({ provider = DEFAULT_PROVIDER, workspaceDir = '', limit = 10 } = {}) {
@@ -5124,20 +3325,6 @@ function parseSessionIdFromRolloutFile(filename) {
 function parseClaudeSessionIdFromFile(filename) {
   const match = String(filename || '').match(/^([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})\.jsonl$/i);
   return match?.[1] || null;
-}
-
-function loadDb() {
-  try {
-    if (!fs.existsSync(DATA_FILE)) return { threads: {} };
-    return JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
-  } catch (err) {
-    console.error('Failed to load DB, using empty state:', err);
-    return { threads: {} };
-  }
-}
-
-function saveDb() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(db, null, 2));
 }
 
 function truncate(text, max) {
