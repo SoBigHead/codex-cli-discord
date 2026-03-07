@@ -1,6 +1,6 @@
 # Codex-ClaudeCode-in-Discord
 
-A Discord bot that lets you direct **Codex CLI** and **Claude Code** from inside Discord.
+A standalone Discord bot that lets you direct **Codex CLI** and **Claude Code** from inside Discord.
 
 > This project is a standalone Discord bot / bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
 
@@ -276,13 +276,14 @@ INSECURE_TLS=1
 
 (Strongly discouraged. Prefer a clean SOCKS tunnel.)
 
-## OpenClaw notes
+## Standalone runtime notes
 
-Many people run this bot alongside their own OpenClaw:
+This repo is a standalone Discord bot for directing Codex CLI and Claude Code from Discord.
 
+- No OpenClaw installation is required
+- No plugin installation is required
 - Keep it as a **separate Discord app**
-- Use OpenClaw to manage/monitor the process (pm2/launchd/docker) if you like
-- The bot is intentionally self-contained: just `.env + npm start`
+- You can still use any process manager you like (`pm2`, `launchd`, Docker, `systemd`, etc.)
 
 ## Security
 

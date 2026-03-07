@@ -1,5 +1,5 @@
 {
-  "name": "codex-cli-discord",
+  "name": "codex-claudecode-in-discord",
   "version": "0.3.1",
   "description": "A Discord bot for directing Codex CLI and Claude Code from Discord, not an OpenClaw plugin.",
   "license": "MIT",

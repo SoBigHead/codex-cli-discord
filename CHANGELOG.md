@@ -31,7 +31,7 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 - Provider-aware state isolation for locked bot instances, including per-provider session/lock files and default slash prefixes.
 
 ### Changed
-- Expanded the bot bridge from Codex-only wording to first-class Codex + Claude support across docs, config examples, and runtime helpers.
+- Expanded the standalone Discord bot from Codex-only wording to first-class Codex + Claude support across docs, config examples, and runtime helpers.
 - Progress/event parsing now understands additional assistant and stream event shapes used by Claude-style runtimes.
 
 ### Fixed

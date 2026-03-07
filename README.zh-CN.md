@@ -1,6 +1,6 @@
 # Codex-ClaudeCode-in-Discord
 
-一个让你可以直接在 Discord 里指挥 **Codex CLI** 和 **Claude Code** 的 Discord Bot。
+一个独立运行、让你可以直接在 Discord 里指挥 **Codex CLI** 和 **Claude Code** 的 Discord Bot。
 
 > 这是一个独立运行的 Discord Bot / bridge，**不是** OpenClaw 插件，也**不依赖** OpenClaw 才能运行。
 
@@ -271,13 +271,14 @@ INSECURE_TLS=1
 
 （强烈不推荐。优先使用干净的 SOCKS 隧道。）
 
-## OpenClaw 说明
+## 独立运行说明
 
-很多人会把这个 Bot 和自己的 OpenClaw 一起运行：
+这个仓库本身就是一个独立运行的 Discord Bot，用来在 Discord 里指挥 Codex CLI 和 Claude Code。
 
+- 不需要安装 OpenClaw
+- 不需要安装任何插件
 - 保持为**独立的 Discord 应用**
-- 你可以用 OpenClaw 管理/监控进程（pm2/launchd/docker）
-- Bot 本身是刻意保持自包含：只需 `.env + npm start`
+- 你仍然可以按自己习惯使用任意进程管理方式（`pm2`、`launchd`、Docker、`systemd` 等）
 
 ## 安全
 
