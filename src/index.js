@@ -115,6 +115,7 @@ import {
 import { createTextCommandHandler } from './text-command-handler.js';
 import { createPromptOrchestrator } from './prompt-orchestrator.js';
 import { autoRepairProxyEnv } from './proxy-env.js';
+import { createDiscordEntryHandlers } from './discord-entry-handlers.js';
 import {
   createDiscordLifecycle,
   isIgnorableDiscordRuntimeError,
@@ -498,132 +499,6 @@ function createClient() {
   return bot;
 }
 
-function bindClientHandlers(bot, lifecycle) {
-  bot.once('ready', async () => {
-    console.log(`✅ Logged in as ${bot.user.tag}`);
-    await registerSlashCommands({
-      client: bot,
-      REST,
-      Routes,
-      discordToken: DISCORD_TOKEN,
-      restProxyAgent,
-      slashCommands,
-      logger: console,
-    });
-  });
-
-  // Auto-join threads so we receive messageCreate events in them
-  bot.on('threadCreate', async (thread) => {
-    try {
-      await joinThreadWithRetry(thread, 'threadCreate');
-      console.log(`🧵 Joined thread: ${thread.name} (${thread.id})`);
-    } catch (err) {
-      console.error(`Failed to join thread ${thread.id}:`, err.message);
-    }
-  });
-
-  // Also join existing threads on startup
-  bot.on('threadListSync', (threads) => {
-    for (const thread of threads.values()) {
-      if (!thread.joined) {
-        joinThreadWithRetry(thread, 'threadListSync')
-          .then(() => console.log(`🧵 Synced into thread: ${thread.name}`))
-          .catch((err) => console.error(`Failed to sync thread ${thread.id}:`, err.message));
-      }
-    }
-  });
-
-  bot.on('messageCreate', async (message) => {
-    try {
-      if (message.author.bot) return;
-      if (message.system) return;
-      if (!isAllowedUser(message.author.id)) return;
-      const channelAllowed = isAllowedChannel(message.channel);
-      const key = message.channel.id;
-      const session = getSession(key);
-      const security = resolveSecurityContext(message.channel, session);
-
-      // Debug: log all incoming messages
-      const chId = message.channel.id;
-      const parentId = message.channel.isThread?.() ? message.channel.parentId : null;
-      const attachmentCount = message.attachments?.size || 0;
-      console.log(`[msg] ch=${chId} parent=${parentId} author=${message.author.tag} allowed=${channelAllowed} profile=${security.profile} mentionOnly=${security.mentionOnly} contentLen=${message.content.length} attachments=${attachmentCount} system=${message.system}`);
-
-      if (!channelAllowed) return;
-
-      // Strip bot mention if present, otherwise use raw content
-      const rawContent = message.content
-        .replace(new RegExp(`<@!?${bot.user.id}>`, 'g'), '')
-        .trim();
-      const isCommand = rawContent.startsWith('!');
-
-      if (isCommand) {
-        await handleCommand(message, key, rawContent);
-        return;
-      }
-
-      if (security.mentionOnly && !doesMessageTargetBot(message, bot.user.id)) return;
-
-      const content = buildPromptFromMessage(rawContent, message.attachments);
-      if (!content) return;
-      await enqueuePrompt(message, key, content, security);
-    } catch (err) {
-      console.error('messageCreate handler error:', err);
-      try {
-        await message.reactions.cache.get('⚡')?.users.remove(bot.user?.id).catch(() => {});
-        await message.react('❌').catch(() => {});
-        await safeReply(message, `❌ 处理失败：${safeError(err)}`);
-      } catch {
-        // ignore
-      }
-    }
-  });
-
-  bot.on('interactionCreate', handleInteractionCreate);
-
-  bot.on('error', (err) => {
-    if (isIgnorableDiscordRuntimeError(err)) {
-      console.warn(`Ignoring non-fatal Discord client error: ${safeError(err)}`);
-      return;
-    }
-    console.error('Discord client error:', err);
-    lifecycle.scheduleSelfHeal('client_error', err);
-  });
-
-  bot.on('shardError', (err, shardId) => {
-    console.error(`Discord shard error (shard=${shardId}):`, err);
-    lifecycle.scheduleSelfHeal(`shard_error:${shardId}`, err);
-  });
-
-  bot.on('shardDisconnect', (event, shardId) => {
-    const code = event?.code ?? 'unknown';
-    const recoverable = isRecoverableGatewayCloseCode(code);
-    console.warn(`Discord shard disconnected (shard=${shardId}, code=${code}, recoverable=${recoverable})`);
-    if (recoverable) {
-      lifecycle.scheduleSelfHeal(`shard_disconnect:${shardId}:code=${code}`);
-    }
-  });
-
-  bot.on('invalidated', () => {
-    console.error('Discord session invalidated.');
-    lifecycle.scheduleSelfHeal('session_invalidated');
-  });
-}
-
-async function joinThreadWithRetry(thread, context = 'thread.join') {
-  if (!thread || thread.joined) return;
-
-  await withDiscordNetworkRetry(
-    () => thread.join(),
-    {
-      logger: console,
-      label: `${context} thread.join (${thread.id})`,
-      maxAttempts: 4,
-      baseDelayMs: 500,
-    },
-  );
-}
-
 // ── Slash Commands ──────────────────────────────────────────────
 
 const slashCommands = buildSlashCommands({
@@ -824,106 +699,6 @@ const routeSlashCommand = createSlashCommandRouter({
   safeError,
 });
 
-async function handleInteractionCreate(interaction) {
-  if (interaction.isButton() || interaction.isStringSelectMenu()) {
-    const isWorkspaceBrowser = isWorkspaceBrowserComponentId(interaction.customId);
-    const commandButton = interaction.isButton() ? parseCommandActionButtonId(interaction.customId) : null;
-    const isOnboarding = interaction.isButton() && isOnboardingButtonId(interaction.customId);
-    if (!isWorkspaceBrowser && !isOnboarding && !commandButton) return;
-    try {
-      if (!isAllowedUser(interaction.user.id)) {
-        await interaction.reply({ content: '⛔ 没有权限。', flags: 64 });
-        return;
-      }
-      if (!(await isAllowedInteractionChannel(interaction))) {
-        await interaction.reply({ content: '⛔ 当前频道未开放。', flags: 64 });
-        return;
-      }
-      if (commandButton) {
-        if (commandButton.userId !== interaction.user.id) {
-          await interaction.reply({ content: '⛔ 这组快捷按钮属于发起命令的用户。', flags: 64 });
-          return;
-        }
-        const handled = await routeSlashCommand({
-          interaction,
-          commandName: commandButton.command,
-          respond: (payload) => sendInteractionResponse(interaction, payload),
-        });
-        if (!handled) {
-          await interaction.reply({ content: '❌ 快捷按钮已失效，请重新执行 slash 命令。', flags: 64 });
-        }
-        return;
-      }
-      if (isWorkspaceBrowser) {
-        await handleWorkspaceBrowserInteraction(interaction);
-        return;
-      }
-      await handleOnboardingButtonInteraction(interaction);
-    } catch (err) {
-      await safeInteractionFailureReply(interaction, err);
-    }
-    return;
-  }
-
-  if (!interaction.isChatInputCommand()) return;
-  if (!isAllowedUser(interaction.user.id)) {
-    await interaction.reply({ content: '⛔ 没有权限。', flags: 64 });
-    return;
-  }
-
-  try {
-    // ACK early to avoid Discord 3-second interaction timeout under transient latency.
-    await interaction.deferReply({ flags: 64 });
-    const respond = (payload) => sendInteractionResponse(interaction, payload);
-
-    if (!(await isAllowedInteractionChannel(interaction))) {
-      await respond({ content: '⛔ 当前频道未开放。', flags: 64 });
-      return;
-    }
-
-    const cmd = normalizeSlashCommandName(interaction.commandName);
-    const handled = await routeSlashCommand({
-      interaction,
-      commandName: cmd,
-      respond,
-    });
-    if (!handled) {
-      await respond({ content: `❌ 未知命令：\`${interaction.commandName}\``, flags: 64 });
-    }
-  } catch (err) {
-    await safeInteractionFailureReply(interaction, err);
-  }
-}
-
-async function sendInteractionResponse(interaction, payload) {
-  const body = typeof payload === 'string' ? { content: payload } : payload;
-  if (interaction.deferred && !interaction.replied) {
-    const { flags: _ignoredFlags, ...editPayload } = body;
-    return interaction.editReply(editPayload);
-  }
-  if (interaction.replied) {
-    return interaction.followUp(body);
-  }
-  return interaction.reply(body);
-}
-
-async function safeInteractionFailureReply(interaction, err) {
-  if (isIgnorableDiscordRuntimeError(err)) {
-    console.warn(`Ignoring non-fatal interaction error: ${safeError(err)}`);
-    return;
-  }
-
-  try {
-    await sendInteractionResponse(interaction, { content: `❌ ${safeError(err)}`, flags: 64 });
-  } catch (replyErr) {
-    if (isIgnorableDiscordRuntimeError(replyErr)) {
-      console.warn(`Ignoring non-fatal interaction reply error: ${safeError(replyErr)}`);
-      return;
-    }
-    throw replyErr;
-  }
-}
-
 const handleCommand = createTextCommandHandler({
   botProvider: BOT_PROVIDER,
   enableConfigCmd: ENABLE_CONFIG_CMD,
@@ -987,6 +762,37 @@ const handleCommand = createTextCommandHandler({
 
 // ── Message handler (prompts → Codex) ──────────────────────────
 
+const discordEntryHandlers = createDiscordEntryHandlers({
+  logger: console,
+  registerSlashCommands,
+  REST,
+  Routes,
+  discordToken: DISCORD_TOKEN,
+  restProxyAgent,
+  slashCommands,
+  withDiscordNetworkRetry,
+  safeReply,
+  safeError,
+  isIgnorableDiscordRuntimeError,
+  isRecoverableGatewayCloseCode,
+  isAllowedUser,
+  isAllowedChannel,
+  isAllowedInteractionChannel,
+  getSession,
+  resolveSecurityContext,
+  handleCommand,
+  enqueuePrompt: (...args) => enqueuePrompt(...args),
+  doesMessageTargetBot,
+  buildPromptFromMessage,
+  parseCommandActionButtonId,
+  isWorkspaceBrowserComponentId,
+  isOnboardingButtonId,
+  handleWorkspaceBrowserInteraction,
+  handleOnboardingButtonInteraction,
+  routeSlashCommand,
+  normalizeSlashCommandName,
+});
+
 const singleInstanceLock = createSingleInstanceLock({
   dataDir: DATA_DIR,
   lockFile: LOCK_FILE,
@@ -1004,7 +810,7 @@ discordLifecycle = createDiscordLifecycle({
   maxLoginBackoffMs: SELF_HEAL_MAX_LOGIN_BACKOFF_MS,
   discordToken: DISCORD_TOKEN,
   createClient,
-  bindClientHandlers,
+  bindClientHandlers: discordEntryHandlers.bindClientHandlers,
   cancelAllChannelWork,
   safeError,
   logger: console,
