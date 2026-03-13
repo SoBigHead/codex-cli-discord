@@ -38,16 +38,16 @@ function buildSlashCommandEntries({ botProvider = null } = {}) {
     },
     {
       name: 'setdir',
-      description: '设置当前 thread 的工作目录（支持 status/default/clear）',
+      description: '设置当前 thread 的工作目录（支持 browse/status/default/clear）',
       configure(builder) {
-        return builder.addStringOption(o => o.setName('path').setDescription('绝对路径，或 status/default/clear').setRequired(true));
+        return builder.addStringOption(o => o.setName('path').setDescription('绝对路径，或 browse/status/default/clear').setRequired(true));
       },
     },
     {
       name: 'setdefaultdir',
-      description: '设置当前 provider 的默认工作目录（支持 status/clear）',
+      description: '设置当前 provider 的默认工作目录（支持 browse/status/clear）',
       configure(builder) {
-        return builder.addStringOption(o => o.setName('path').setDescription('绝对路径，或 status/clear').setRequired(true));
+        return builder.addStringOption(o => o.setName('path').setDescription('绝对路径，或 browse/status/clear').setRequired(true));
       },
     },
     !botProvider && {

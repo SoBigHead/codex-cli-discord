@@ -25,6 +25,7 @@ function createRouterState() {
   const replies = [];
   let resetCalls = 0;
   const cancelCalls = [];
+  const browseCalls = [];
 
   const router = createSlashCommandRouter({
     slashRef: (name) => `/cx_${name}`,
@@ -82,7 +83,9 @@ function createRouterState() {
     formatCompactConfigReport: () => '',
     formatReasoningEffortUnsupported: () => '',
     normalizeProvider: (value) => value,
-    parseWorkspaceCommandAction: () => ({ type: 'status' }),
+    parseWorkspaceCommandAction: (value) => String(value || '').trim().toLowerCase() === 'browse'
+      ? { type: 'browse' }
+      : { type: 'status' },
     parseUiLanguageInput: () => 'zh',
     parseSecurityProfileInput: () => 'team',
     parseTimeoutConfigAction: () => ({ type: 'status' }),
@@ -92,6 +95,11 @@ function createRouterState() {
       cancelCalls.push(outcome);
       return outcome;
     },
+    openWorkspaceBrowser: ({ key, mode, userId }) => {
+      const payload = { content: `browse:${mode}:${key}:${userId}`, components: [] };
+      browseCalls.push(payload);
+      return payload;
+    },
     resolvePath: (value) => value,
     safeError: (err) => String(err?.message || err),
   });
@@ -99,6 +107,7 @@ function createRouterState() {
   return {
     replies,
     router,
+    getBrowseCalls: () => [...browseCalls],
     getResetCalls: () => resetCalls,
     getCancelCalls: () => [...cancelCalls],
   };
@@ -139,6 +148,30 @@ test('createSlashCommandRouter routes abort alias to cancel handler', async () =
   assert.deepEqual(state.replies, [{
     content: JSON.stringify({ key: 'channel-1', reason: 'slash_abort' }),
     flags: 64,
+  }]);
+});
+
+test('createSlashCommandRouter opens workspace browser for setdir browse', async () => {
+  const state = createRouterState();
+  const interaction = createInteraction('cx_setdir');
+  interaction.options.getString = () => 'browse';
+
+  const handled = await state.router({
+    interaction,
+    commandName: 'setdir',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(state.getBrowseCalls(), [{
+    content: 'browse:thread:channel-1:user-1',
+    components: [],
+  }]);
+  assert.deepEqual(state.replies, [{
+    content: 'browse:thread:channel-1:user-1',
+    components: [],
   }]);
 });
 

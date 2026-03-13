@@ -88,3 +88,17 @@ test('buildSlashCommands includes workspace commands and aliases', () => {
   assert.ok(!names.includes('cx_retry'));
   assert.ok(!names.includes('cx_process_lines'));
 });
+
+test('buildSlashCommands exposes browse keyword in workspace option descriptions', () => {
+  const commands = buildSlashCommands({
+    SlashCommandBuilder: MockSlashCommandBuilder,
+    slashPrefix: 'cx',
+    botProvider: null,
+  }).map((command) => command.toJSON());
+
+  const setdir = commands.find((command) => command.name === 'cx_setdir');
+  const setdefaultdir = commands.find((command) => command.name === 'cx_setdefaultdir');
+
+  assert.match(setdir.options[0].description, /browse/);
+  assert.match(setdefaultdir.options[0].description, /browse/);
+});

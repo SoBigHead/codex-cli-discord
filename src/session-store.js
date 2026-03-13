@@ -22,6 +22,28 @@ function normalizeWorkspaceDir(value) {
   return path.resolve(raw);
 }
 
+function normalizeWorkspaceFavoritesMap(value, normalizeProvider) {
+  const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  const out = {};
+
+  for (const [providerKey, dirs] of Object.entries(source)) {
+    const provider = typeof normalizeProvider === 'function' ? normalizeProvider(providerKey) : providerKey;
+    const normalizedDirs = [];
+    const seen = new Set();
+    for (const dir of Array.isArray(dirs) ? dirs : []) {
+      const normalized = normalizeWorkspaceDir(dir);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      normalizedDirs.push(normalized);
+    }
+    if (normalizedDirs.length > 0) {
+      out[provider] = normalizedDirs;
+    }
+  }
+
+  return out;
+}
+
 export function createSessionStore({
   dataFile,
   workspaceRoot,
@@ -39,8 +61,40 @@ export function createSessionStore({
 } = {}) {
   let db = loadDb(dataFile);
 
+  function ensureDbShape() {
+    let changed = false;
+
+    if (!db || typeof db !== 'object' || Array.isArray(db)) {
+      db = { threads: {}, workspaceFavorites: {} };
+      return true;
+    }
+
+    if (!db.threads || typeof db.threads !== 'object' || Array.isArray(db.threads)) {
+      db.threads = {};
+      changed = true;
+    }
+
+    const normalizedFavorites = normalizeWorkspaceFavoritesMap(db.workspaceFavorites, normalizeProvider);
+    const currentFavorites = db.workspaceFavorites && typeof db.workspaceFavorites === 'object' && !Array.isArray(db.workspaceFavorites)
+      ? db.workspaceFavorites
+      : {};
+    if (JSON.stringify(currentFavorites) !== JSON.stringify(normalizedFavorites)) {
+      db.workspaceFavorites = normalizedFavorites;
+      changed = true;
+    } else if (db.workspaceFavorites !== currentFavorites) {
+      db.workspaceFavorites = currentFavorites;
+      changed = true;
+    }
+
+    return changed;
+  }
+
   function saveDb() {
     fs.writeFileSync(dataFile, JSON.stringify(db, null, 2));
+  }
+
+  if (ensureDbShape()) {
+    saveDb();
   }
 
   function getSession(key) {
@@ -282,12 +336,93 @@ export function createSessionStore({
       .filter(({ session }) => !normalizedProvider || normalizeProvider(session?.provider || defaults.provider) === normalizedProvider);
   }
 
+  function listFavoriteWorkspaces({ provider = null } = {}) {
+    ensureDbShape();
+    const normalizedProvider = provider ? normalizeProvider(provider) : null;
+    if (normalizedProvider) {
+      return [...(db.workspaceFavorites?.[normalizedProvider] || [])];
+    }
+
+    return Object.entries(db.workspaceFavorites || {})
+      .map(([providerKey, workspaceDirs]) => ({
+        provider: providerKey,
+        workspaceDirs: [...workspaceDirs],
+      }));
+  }
+
+  function addFavoriteWorkspace(provider, workspaceDir) {
+    ensureDbShape();
+    const normalizedProvider = normalizeProvider(provider || defaults.provider);
+    const normalizedWorkspaceDir = normalizeWorkspaceDir(workspaceDir);
+    const current = [...(db.workspaceFavorites[normalizedProvider] || [])];
+
+    if (!normalizedWorkspaceDir) {
+      return {
+        provider: normalizedProvider,
+        workspaceDir: null,
+        changed: false,
+        favorites: current,
+      };
+    }
+
+    if (current.includes(normalizedWorkspaceDir)) {
+      return {
+        provider: normalizedProvider,
+        workspaceDir: normalizedWorkspaceDir,
+        changed: false,
+        favorites: current,
+      };
+    }
+
+    db.workspaceFavorites[normalizedProvider] = [normalizedWorkspaceDir, ...current];
+    saveDb();
+    return {
+      provider: normalizedProvider,
+      workspaceDir: normalizedWorkspaceDir,
+      changed: true,
+      favorites: [...db.workspaceFavorites[normalizedProvider]],
+    };
+  }
+
+  function removeFavoriteWorkspace(provider, workspaceDir) {
+    ensureDbShape();
+    const normalizedProvider = normalizeProvider(provider || defaults.provider);
+    const normalizedWorkspaceDir = normalizeWorkspaceDir(workspaceDir);
+    const current = [...(db.workspaceFavorites[normalizedProvider] || [])];
+
+    if (!normalizedWorkspaceDir || !current.includes(normalizedWorkspaceDir)) {
+      return {
+        provider: normalizedProvider,
+        workspaceDir: normalizedWorkspaceDir,
+        changed: false,
+        favorites: current,
+      };
+    }
+
+    const next = current.filter((dir) => dir !== normalizedWorkspaceDir);
+    if (next.length > 0) {
+      db.workspaceFavorites[normalizedProvider] = next;
+    } else {
+      delete db.workspaceFavorites[normalizedProvider];
+    }
+    saveDb();
+    return {
+      provider: normalizedProvider,
+      workspaceDir: normalizedWorkspaceDir,
+      changed: true,
+      favorites: [...next],
+    };
+  }
+
   return {
     getSession,
     saveDb,
     ensureWorkspace,
     getWorkspaceBinding,
     listSessions,
+    listFavoriteWorkspaces,
+    addFavoriteWorkspace,
+    removeFavoriteWorkspace,
   };
 }
 

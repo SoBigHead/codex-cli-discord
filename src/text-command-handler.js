@@ -59,6 +59,7 @@ export function createTextCommandHandler({
   isConfigKeyAllowed,
   isReasoningEffortSupported,
   cancelChannelWork,
+  openWorkspaceBrowser,
   resolvePath,
   safeError,
 } = {}) {
@@ -227,6 +228,19 @@ export function createTextCommandHandler({
           await safeReply(message, formatWorkspaceUpdateReport(key, session, result));
           return;
         }
+        if (action.type === 'browse') {
+          if (typeof openWorkspaceBrowser !== 'function') {
+            await safeReply(message, formatWorkspaceSetHelp(getSessionLanguage(session)));
+            return;
+          }
+          await safeReply(message, openWorkspaceBrowser({
+            key,
+            session,
+            userId: message.author?.id,
+            mode: 'thread',
+          }));
+          return;
+        }
         const resolved = resolvePath(action.value);
         if (!isExistingDirectory(resolved)) {
           await safeReply(message, `❌ 目录不存在或不是目录：\`${resolved}\``);
@@ -255,6 +269,19 @@ export function createTextCommandHandler({
         if (action.type === 'clear') {
           const result = commandActions.setDefaultWorkspaceDir(session, null);
           await safeReply(message, formatDefaultWorkspaceUpdateReport(key, session, result));
+          return;
+        }
+        if (action.type === 'browse') {
+          if (typeof openWorkspaceBrowser !== 'function') {
+            await safeReply(message, formatDefaultWorkspaceSetHelp(getSessionLanguage(session)));
+            return;
+          }
+          await safeReply(message, openWorkspaceBrowser({
+            key,
+            session,
+            userId: message.author?.id,
+            mode: 'default',
+          }));
           return;
         }
         const resolved = resolvePath(action.value);

@@ -56,6 +56,7 @@ import {
 } from './slash-command-router.js';
 import { createTextCommandHandler } from './text-command-handler.js';
 import { createWorkspaceRuntime } from './workspace-runtime.js';
+import { createWorkspaceBrowser } from './workspace-browser.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -124,6 +125,7 @@ const {
   Partials,
   PermissionFlagsBits,
   SlashCommandBuilder,
+  StringSelectMenuBuilder,
   REST,
   Routes,
 } = await import('discord.js');
@@ -320,7 +322,16 @@ const sessionStore = createSessionStore({
   normalizeSessionCompactTokenLimit,
   resolveDefaultWorkspace: resolveProviderDefaultWorkspace,
 });
-const { getSession, saveDb, ensureWorkspace, getWorkspaceBinding, listSessions: listStoredSessions } = sessionStore;
+const {
+  getSession,
+  saveDb,
+  ensureWorkspace,
+  getWorkspaceBinding,
+  listSessions: listStoredSessions,
+  listFavoriteWorkspaces,
+  addFavoriteWorkspace,
+  removeFavoriteWorkspace,
+} = sessionStore;
 
 const commandActions = createSessionCommandActions({
   saveDb,
@@ -563,6 +574,30 @@ const {
   parseTimeoutConfigAction,
 });
 
+const {
+  openWorkspaceBrowser,
+  handleWorkspaceBrowserInteraction,
+  isWorkspaceBrowserComponentId,
+} = createWorkspaceBrowser({
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  StringSelectMenuBuilder,
+  commandActions,
+  workspaceRoot: WORKSPACE_ROOT,
+  getSession,
+  getSessionLanguage,
+  getSessionProvider,
+  getWorkspaceBinding,
+  listStoredSessions,
+  listFavoriteWorkspaces,
+  addFavoriteWorkspace,
+  removeFavoriteWorkspace,
+  resolveProviderDefaultWorkspace,
+  formatWorkspaceUpdateReport,
+  formatDefaultWorkspaceUpdateReport,
+});
+
 const routeSlashCommand = createSlashCommandRouter({
   botProvider: BOT_PROVIDER,
   defaultUiLanguage: DEFAULT_UI_LANGUAGE,
@@ -610,14 +645,17 @@ const routeSlashCommand = createSlashCommandRouter({
   parseTimeoutConfigAction,
   parseCompactConfigAction,
   cancelChannelWork,
+  openWorkspaceBrowser,
   resolvePath,
   safeError,
 });
 
 async function handleInteractionCreate(interaction) {
-  if (interaction.isButton()) {
-    const commandButton = parseCommandActionButtonId(interaction.customId);
-    if (!isOnboardingButtonId(interaction.customId) && !commandButton) return;
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    const isWorkspaceBrowser = isWorkspaceBrowserComponentId(interaction.customId);
+    const commandButton = interaction.isButton() ? parseCommandActionButtonId(interaction.customId) : null;
+    const isOnboarding = interaction.isButton() && isOnboardingButtonId(interaction.customId);
+    if (!isWorkspaceBrowser && !isOnboarding && !commandButton) return;
     try {
       if (!isAllowedUser(interaction.user.id)) {
         await interaction.reply({ content: '⛔ 没有权限。', flags: 64 });
@@ -640,6 +678,10 @@ async function handleInteractionCreate(interaction) {
         if (!handled) {
           await interaction.reply({ content: '❌ 快捷按钮已失效，请重新执行 slash 命令。', flags: 64 });
         }
+        return;
+      }
+      if (isWorkspaceBrowser) {
+        await handleWorkspaceBrowserInteraction(interaction);
         return;
       }
       await handleOnboardingButtonInteraction(interaction);
@@ -996,6 +1038,7 @@ const handleCommand = createTextCommandHandler({
   isConfigKeyAllowed,
   isReasoningEffortSupported,
   cancelChannelWork,
+  openWorkspaceBrowser,
   resolvePath,
   safeError,
 });
@@ -2853,6 +2896,7 @@ function parseWorkspaceCommandAction(value) {
   if (!raw) return { type: 'invalid' };
   const lower = raw.toLowerCase();
   if (['status', 'state', 'show', '查看', '状态'].includes(lower)) return { type: 'status' };
+  if (['browse', 'picker', 'select', '浏览', '选择'].includes(lower)) return { type: 'browse' };
   if (['default', 'inherit', 'clear', 'reset', '跟随默认', '清除'].includes(lower)) return { type: 'clear' };
   return { type: 'set', value: raw };
 }
@@ -2971,30 +3015,30 @@ function formatWorkspaceReport(key, session) {
 function formatWorkspaceSetHelp(language = 'zh') {
   if (language === 'en') {
     return [
-      'Usage: `!setdir <path|default|status>`',
-      `Slash: \`${slashRef('setdir')} path:<path|default|status>\``,
-      'Examples: `!setdir ~/GitHub/my-repo`, `!setdir default`, `!setdir status`',
+      'Usage: `!setdir <path|browse|default|status>`',
+      `Slash: \`${slashRef('setdir')} path:<path|browse|default|status>\``,
+      'Examples: `!setdir ~/GitHub/my-repo`, `!setdir browse`, `!setdir default`, `!setdir status`',
     ].join('\n');
   }
   return [
-    '用法：`!setdir <path|default|status>`',
-    `Slash：\`${slashRef('setdir')} path:<path|default|status>\``,
-    '示例：`!setdir ~/GitHub/my-repo`、`!setdir default`、`!setdir status`',
+    '用法：`!setdir <path|browse|default|status>`',
+    `Slash：\`${slashRef('setdir')} path:<path|browse|default|status>\``,
+    '示例：`!setdir ~/GitHub/my-repo`、`!setdir browse`、`!setdir default`、`!setdir status`',
   ].join('\n');
 }
 
 function formatDefaultWorkspaceSetHelp(language = 'zh') {
   if (language === 'en') {
     return [
-      'Usage: `!setdefaultdir <path|clear|status>`',
-      `Slash: \`${slashRef('setdefaultdir')} path:<path|clear|status>\``,
-      'Examples: `!setdefaultdir ~/GitHub`, `!setdefaultdir clear`, `!setdefaultdir status`',
+      'Usage: `!setdefaultdir <path|browse|clear|status>`',
+      `Slash: \`${slashRef('setdefaultdir')} path:<path|browse|clear|status>\``,
+      'Examples: `!setdefaultdir ~/GitHub`, `!setdefaultdir browse`, `!setdefaultdir clear`, `!setdefaultdir status`',
     ].join('\n');
   }
   return [
-    '用法：`!setdefaultdir <path|clear|status>`',
-    `Slash：\`${slashRef('setdefaultdir')} path:<path|clear|status>\``,
-    '示例：`!setdefaultdir ~/GitHub`、`!setdefaultdir clear`、`!setdefaultdir status`',
+    '用法：`!setdefaultdir <path|browse|clear|status>`',
+    `Slash：\`${slashRef('setdefaultdir')} path:<path|browse|clear|status>\``,
+    '示例：`!setdefaultdir ~/GitHub`、`!setdefaultdir browse`、`!setdefaultdir clear`、`!setdefaultdir status`',
   ].join('\n');
 }
 

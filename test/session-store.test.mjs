@@ -180,3 +180,66 @@ test('createSessionStore migrates persisted legacy thread workspace to null so d
   assert.equal('lastPromptAt' in session, false);
   assert.equal('processLines' in session, false);
 });
+
+test('createSessionStore persists provider-scoped workspace favorites', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-discord-session-store-'));
+  const dataFile = path.join(root, 'sessions.json');
+  const workspaceRoot = path.join(root, 'workspaces');
+  const favoriteA = path.join(root, 'repo-a');
+  const favoriteB = path.join(root, 'repo-b');
+  fs.mkdirSync(favoriteA, { recursive: true });
+  fs.mkdirSync(favoriteB, { recursive: true });
+
+  const store = createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  });
+
+  const addedA = store.addFavoriteWorkspace('codex', favoriteA);
+  const addedB = store.addFavoriteWorkspace('codex', favoriteB);
+  const duplicate = store.addFavoriteWorkspace('codex', favoriteA);
+
+  assert.equal(addedA.changed, true);
+  assert.equal(addedB.changed, true);
+  assert.equal(duplicate.changed, false);
+  assert.deepEqual(store.listFavoriteWorkspaces({ provider: 'codex' }), [favoriteB, favoriteA]);
+
+  const reloaded = createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  });
+
+  assert.deepEqual(reloaded.listFavoriteWorkspaces({ provider: 'codex' }), [favoriteB, favoriteA]);
+
+  const removed = reloaded.removeFavoriteWorkspace('codex', favoriteB);
+  assert.equal(removed.changed, true);
+  assert.deepEqual(reloaded.listFavoriteWorkspaces({ provider: 'codex' }), [favoriteA]);
+});

@@ -89,6 +89,7 @@ export function createSlashCommandRouter({
   parseTimeoutConfigAction,
   parseCompactConfigAction,
   cancelChannelWork,
+  openWorkspaceBrowser,
   resolvePath,
   safeError,
 } = {}) {
@@ -195,6 +196,20 @@ export function createSlashCommandRouter({
       await respond({ content: formatWorkspaceUpdateReport(key, session, result), flags: 64 });
       return;
     }
+    if (action.type === 'browse') {
+      if (typeof openWorkspaceBrowser !== 'function') {
+        await respond({ content: formatWorkspaceSetHelp(getSessionLanguage(session)), flags: 64 });
+        return;
+      }
+      await respond(openWorkspaceBrowser({
+        key,
+        session,
+        userId: interaction.user.id,
+        mode: 'thread',
+        flags: 64,
+      }));
+      return;
+    }
 
     const resolved = resolvePath(action.value);
     if (!isExistingDirectory(resolved)) {
@@ -219,6 +234,20 @@ export function createSlashCommandRouter({
     if (action.type === 'clear') {
       const result = commandActions.setDefaultWorkspaceDir(session, null);
       await respond({ content: formatDefaultWorkspaceUpdateReport(key, session, result), flags: 64 });
+      return;
+    }
+    if (action.type === 'browse') {
+      if (typeof openWorkspaceBrowser !== 'function') {
+        await respond({ content: formatDefaultWorkspaceSetHelp(getSessionLanguage(session)), flags: 64 });
+        return;
+      }
+      await respond(openWorkspaceBrowser({
+        key,
+        session,
+        userId: interaction.user.id,
+        mode: 'default',
+        flags: 64,
+      }));
       return;
     }
 
