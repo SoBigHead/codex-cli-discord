@@ -36,9 +36,11 @@ function createHarness(overrides = {}) {
     safeError: (err) => err?.message || String(err),
     isIgnorableDiscordRuntimeError: (err) => Number(err?.code) === 10062,
     isRecoverableGatewayCloseCode: (code) => Number(code) !== 4004,
-    isAllowedUser: () => true,
-    isAllowedChannel: () => true,
-    isAllowedInteractionChannel: async () => true,
+    accessPolicy: {
+      isAllowedUser: () => true,
+      isAllowedChannel: () => true,
+      isAllowedInteractionChannel: async () => true,
+    },
     getSession: () => ({ id: 'sess-1' }),
     resolveSecurityContext: () => ({ profile: 'team', mentionOnly: false }),
     handleCommand: async (...args) => {
@@ -47,8 +49,10 @@ function createHarness(overrides = {}) {
     enqueuePrompt: async (...args) => {
       calls.enqueuePrompt.push(args);
     },
-    doesMessageTargetBot: () => false,
-    buildPromptFromMessage: (text) => text,
+    messageInput: {
+      doesMessageTargetBot: () => false,
+      buildPromptFromMessage: (text) => text,
+    },
     parseCommandActionButtonId: () => null,
     isWorkspaceBrowserComponentId: () => false,
     isOnboardingButtonId: () => false,
@@ -142,9 +146,11 @@ test('handleInteractionCreate defers chat commands and reports unknown commands 
 
 test('handleMessageCreate strips bot mention and enqueues prompt', async () => {
   const { handlers, calls } = createHarness({
-    doesMessageTargetBot: () => true,
+    messageInput: {
+      doesMessageTargetBot: () => true,
+      buildPromptFromMessage: (text) => `PROMPT:${text}`,
+    },
     resolveSecurityContext: () => ({ profile: 'public', mentionOnly: true }),
-    buildPromptFromMessage: (text) => `PROMPT:${text}`,
   });
   const message = {
     content: '<@123>  hello world  ',

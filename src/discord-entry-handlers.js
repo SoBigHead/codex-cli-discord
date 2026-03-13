@@ -11,15 +11,12 @@ export function createDiscordEntryHandlers({
   safeError = (err) => err?.message || String(err),
   isIgnorableDiscordRuntimeError = () => false,
   isRecoverableGatewayCloseCode = () => true,
-  isAllowedUser = () => true,
-  isAllowedChannel = () => true,
-  isAllowedInteractionChannel = async () => true,
+  accessPolicy = {},
   getSession,
   resolveSecurityContext,
   handleCommand,
   enqueuePrompt,
-  doesMessageTargetBot,
-  buildPromptFromMessage,
+  messageInput = {},
   parseCommandActionButtonId,
   isWorkspaceBrowserComponentId,
   isOnboardingButtonId,
@@ -28,6 +25,16 @@ export function createDiscordEntryHandlers({
   routeSlashCommand,
   normalizeSlashCommandName,
 } = {}) {
+  const {
+    isAllowedUser = () => true,
+    isAllowedChannel = () => true,
+    isAllowedInteractionChannel = async () => true,
+  } = accessPolicy;
+  const {
+    doesMessageTargetBot = () => false,
+    buildPromptFromMessage = () => '',
+  } = messageInput;
+
   async function joinThreadWithRetry(thread, context = 'thread.join') {
     if (!thread || thread.joined) return;
 

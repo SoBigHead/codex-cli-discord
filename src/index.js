@@ -115,7 +115,9 @@ import {
 import { createTextCommandHandler } from './text-command-handler.js';
 import { createPromptOrchestrator } from './prompt-orchestrator.js';
 import { autoRepairProxyEnv } from './proxy-env.js';
+import { createDiscordAccessPolicy } from './discord-access-policy.js';
 import { createDiscordEntryHandlers } from './discord-entry-handlers.js';
+import * as discordMessageInput from './discord-message-input.js';
 import {
   createDiscordLifecycle,
   isIgnorableDiscordRuntimeError,
@@ -762,6 +764,11 @@ const handleCommand = createTextCommandHandler({
 
 // ── Message handler (prompts → Codex) ──────────────────────────
 
+const discordAccessPolicy = createDiscordAccessPolicy({
+  allowedChannelIds: ALLOWED_CHANNEL_IDS,
+  allowedUserIds: ALLOWED_USER_IDS,
+});
+
 const discordEntryHandlers = createDiscordEntryHandlers({
   logger: console,
   registerSlashCommands,
@@ -775,15 +782,12 @@ const discordEntryHandlers = createDiscordEntryHandlers({
   safeError,
   isIgnorableDiscordRuntimeError,
   isRecoverableGatewayCloseCode,
-  isAllowedUser,
-  isAllowedChannel,
-  isAllowedInteractionChannel,
+  accessPolicy: discordAccessPolicy,
   getSession,
   resolveSecurityContext,
   handleCommand,
   enqueuePrompt: (...args) => enqueuePrompt(...args),
-  doesMessageTargetBot,
-  buildPromptFromMessage,
+  messageInput: discordMessageInput,
   parseCommandActionButtonId,
   isWorkspaceBrowserComponentId,
   isOnboardingButtonId,
@@ -1120,12 +1124,6 @@ const { handlePrompt } = createPromptOrchestrator({
   handlePrompt,
 }));
 
-function doesMessageTargetBot(message, botUserId) {
-  const mentioned = Boolean(message.mentions?.users?.has?.(botUserId));
-  const repliedToBot = message.mentions?.repliedUser?.id === botUserId;
-  return mentioned || repliedToBot;
-}
-
 function normalizeSlashPrefix(value) {
   const raw = String(value || '')
     .trim()
@@ -1134,85 +1132,6 @@ function normalizeSlashPrefix(value) {
     .replace(/^_+|_+$/g, '');
   if (!raw) return '';
   return raw.slice(0, 12);
-}
-
-function isAllowedUser(userId) {
-  if (!ALLOWED_USER_IDS) return true;
-  return ALLOWED_USER_IDS.has(userId);
-}
-
-function isAllowedChannel(channel) {
-  if (!ALLOWED_CHANNEL_IDS) return true;
-
-  if (ALLOWED_CHANNEL_IDS.has(channel.id)) return true;
-
-  const parentId = channel.isThread?.() ? channel.parentId : null;
-  return Boolean(parentId && ALLOWED_CHANNEL_IDS.has(parentId));
-}
-
-function buildPromptFromMessage(rawContent, attachments) {
-  const text = String(rawContent || '').trim();
-  const attachmentBlock = formatAttachmentsForPrompt(attachments);
-
-  if (!text && !attachmentBlock) return '';
-  if (text && !attachmentBlock) return text;
-
-  if (!text && attachmentBlock) {
-    return [
-      '用户发送了附件，请先查看附件再回复。',
-      attachmentBlock,
-    ].join('\n\n');
-  }
-
-  return [
-    text,
-    attachmentBlock,
-  ].join('\n\n').trim();
-}
-
-function formatAttachmentsForPrompt(attachments) {
-  if (!attachments || !attachments.size) return '';
-
-  const lines = [];
-  let index = 0;
-  for (const attachment of attachments.values()) {
-    index += 1;
-    if (index > 8) {
-      lines.push(`...and ${attachments.size - 8} more attachment(s).`);
-      break;
-    }
-
-    const name = attachment.name || 'unnamed-file';
-    const type = attachment.contentType || 'unknown';
-    const size = Number.isFinite(attachment.size) ? `${attachment.size}B` : 'unknown';
-    const url = attachment.url || attachment.proxyURL || '(missing-url)';
-    lines.push(`${index}. name=${name}; type=${type}; size=${size}; url=${url}`);
-  }
-
-  return [
-    'Attachments:',
-    ...lines,
-  ].join('\n');
-}
-
-async function isAllowedInteractionChannel(interaction) {
-  if (!ALLOWED_CHANNEL_IDS) return true;
-
-  const channelId = interaction.channelId;
-  if (channelId && ALLOWED_CHANNEL_IDS.has(channelId)) return true;
-
-  let channel = interaction.channel || null;
-  if (!channel && channelId) {
-    try {
-      channel = await interaction.client.channels.fetch(channelId);
-    } catch {
-      channel = null;
-    }
-  }
-  if (!channel) return false;
-
-  const parentId = channel.isThread?.() ? channel.parentId : null;
-  return Boolean(parentId && ALLOWED_CHANNEL_IDS.has(parentId));
 }
 
 function truncate(text, max) {
