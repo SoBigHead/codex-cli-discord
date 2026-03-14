@@ -43,6 +43,18 @@ export function normalizeSessionTimeoutMs(value) {
   return normalizeTimeoutMs(n, 0);
 }
 
+function normalizeTaskMaxAttempts(value, fallback = 3) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(1, Math.floor(Number(fallback) || 3));
+  return Math.max(1, Math.floor(n));
+}
+
+function normalizeTaskRetryDelayMs(value, fallback = 0) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return Math.max(0, Math.floor(Number(fallback) || 0));
+  return Math.max(0, Math.floor(n));
+}
+
 export function parseTimeoutConfigAction(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
@@ -188,6 +200,9 @@ export function createSessionSettings({
   defaultUiLanguage = 'zh',
   securityProfile = 'auto',
   codexTimeoutMs = 0,
+  taskMaxAttempts = 3,
+  taskRetryBaseDelayMs = 1000,
+  taskRetryMaxDelayMs = 8000,
   compactStrategy = 'hard',
   compactOnThreshold = true,
   maxInputTokensBeforeCompact = 250000,
@@ -214,6 +229,23 @@ export function createSessionSettings({
       return { timeoutMs: sessionTimeout, source: 'session override' };
     }
     return { timeoutMs: codexTimeoutMs, source: 'env default' };
+  }
+
+  function resolveTaskRetrySetting(session) {
+    const hasOverride = ['taskMaxAttempts', 'taskRetryBaseDelayMs', 'taskRetryMaxDelayMs']
+      .some((key) => session?.[key] !== null && session?.[key] !== undefined && session?.[key] !== '');
+    const maxAttempts = normalizeTaskMaxAttempts(session?.taskMaxAttempts, taskMaxAttempts);
+    const baseDelayMs = normalizeTaskRetryDelayMs(session?.taskRetryBaseDelayMs, taskRetryBaseDelayMs);
+    const maxDelayMs = Math.max(
+      baseDelayMs,
+      normalizeTaskRetryDelayMs(session?.taskRetryMaxDelayMs, taskRetryMaxDelayMs),
+    );
+    return {
+      maxAttempts,
+      baseDelayMs,
+      maxDelayMs,
+      source: hasOverride ? 'session override' : 'env default',
+    };
   }
 
   function resolveCompactStrategySetting(session) {
@@ -268,6 +300,7 @@ export function createSessionSettings({
     getSessionLanguage,
     getEffectiveSecurityProfile,
     resolveTimeoutSetting,
+    resolveTaskRetrySetting,
     resolveCompactStrategySetting,
     resolveCompactEnabledSetting,
     resolveCompactThresholdSetting,

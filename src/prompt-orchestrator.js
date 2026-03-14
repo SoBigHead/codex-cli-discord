@@ -1,6 +1,10 @@
 import { createPromptResultRenderer } from './prompt-result-renderer.js';
 import { withRetryAction } from './retry-action-button.js';
 
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export function createPromptOrchestrator({
   showReasoning = false,
   resultChunkChars = 1900,
@@ -21,6 +25,7 @@ export function createPromptOrchestrator({
   getProviderDefaultBin,
   getProviderBinEnvName,
   resolveTimeoutSetting,
+  resolveTaskRetrySetting = () => ({ maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 8000, source: 'default' }),
   resolveCompactStrategySetting,
   resolveCompactEnabledSetting,
   resolveCompactThresholdSetting,
@@ -45,6 +50,7 @@ export function createPromptOrchestrator({
   toOptionalInt,
   extractInputTokensFromUsage,
   composeFinalAnswerText,
+  sleep = defaultSleep,
 } = {}) {
   const { composeResultText } = createPromptResultRenderer({
     showReasoning,
@@ -118,6 +124,87 @@ export function createPromptOrchestrator({
     ].join('\n');
   }
 
+  function normalizeTaskRetryPolicy(policy) {
+    const maxAttemptsRaw = Number(policy?.maxAttempts);
+    const baseDelayRaw = Number(policy?.baseDelayMs);
+    const maxDelayRaw = Number(policy?.maxDelayMs);
+    const maxAttempts = Math.max(1, Number.isFinite(maxAttemptsRaw) ? Math.floor(maxAttemptsRaw) : 3);
+    const baseDelayMs = Math.max(0, Number.isFinite(baseDelayRaw) ? Math.floor(baseDelayRaw) : 0);
+    const maxDelayMs = Math.max(
+      baseDelayMs,
+      Number.isFinite(maxDelayRaw) ? Math.floor(maxDelayRaw) : Math.max(baseDelayMs, 8000),
+    );
+    return {
+      maxAttempts,
+      baseDelayMs,
+      maxDelayMs,
+      source: policy?.source || 'default',
+    };
+  }
+
+  function shouldAutoRetryResult(result) {
+    return Boolean(result) && !result.ok && !result.cancelled && !result.timedOut;
+  }
+
+  function computeRetryDelayMs(nextAttempt, policy) {
+    if (nextAttempt <= 1 || policy.baseDelayMs <= 0) return 0;
+    const exponent = Math.max(0, nextAttempt - 2);
+    return Math.min(policy.maxDelayMs, policy.baseDelayMs * (2 ** exponent));
+  }
+
+  function formatRetryDelay(delayMs, language) {
+    if (!Number.isFinite(delayMs) || delayMs <= 0) {
+      return language === 'en' ? 'immediately' : '立即';
+    }
+    if (delayMs < 1000) return `${delayMs}ms`;
+    const seconds = delayMs / 1000;
+    return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
+  }
+
+  function buildRetryProgressText({
+    language,
+    failedAttempt,
+    nextAttempt,
+    maxAttempts,
+    delayMs,
+    resetSessionId = null,
+  }) {
+    const delayLabel = formatRetryDelay(delayMs, language);
+    if (language === 'en') {
+      return [
+        `Attempt ${failedAttempt}/${maxAttempts} failed.`,
+        `Retry ${nextAttempt}/${maxAttempts} starts ${delayMs > 0 ? `in ${delayLabel}` : delayLabel}.`,
+        resetSessionId ? `Session reset: ${resetSessionId}.` : null,
+      ].filter(Boolean).join(' ');
+    }
+
+    return [
+      `第 ${failedAttempt}/${maxAttempts} 次尝试失败。`,
+      `将在 ${delayLabel} 后开始第 ${nextAttempt}/${maxAttempts} 次重试。`,
+      resetSessionId ? `已重置旧 session：${resetSessionId}。` : null,
+    ].filter(Boolean).join('');
+  }
+
+  function buildRetrySummaryLine({ attemptsUsed, maxAttempts, retryEvents }) {
+    if (attemptsUsed <= 1) return null;
+    const retryCount = Math.max(0, attemptsUsed - 1);
+    const delayLabels = retryEvents
+      .map((item) => formatRetryDelay(item.delayMs, 'zh'))
+      .filter(Boolean);
+    return [
+      `• retry: 已自动重试 ${retryCount} 次`,
+      `（总计 ${attemptsUsed}/${maxAttempts} 次尝试`,
+      delayLabels.length ? `；退避 ${delayLabels.join(' -> ')}` : '',
+      '）',
+    ].join('');
+  }
+
+  function appendNotes(result, notes) {
+    if (!Array.isArray(notes) || notes.length === 0) return;
+    result.notes ||= [];
+    result.notes.unshift(...notes);
+  }
+
   async function handlePrompt(message, key, prompt, channelState) {
     if (channelState.cancelRequested) {
       return { ok: false, cancelled: true };
@@ -126,6 +213,7 @@ export function createPromptOrchestrator({
     const session = getSession(key);
     const workspaceDir = ensureWorkspace(session, key);
     const language = normalizeUiLanguage(getSessionLanguage(session));
+    const taskRetryPolicy = normalizeTaskRetryPolicy(resolveTaskRetrySetting(session));
     const waitingForWorkspaceText = language === 'en'
       ? `Waiting for workspace lock: ${workspaceDir}`
       : `等待 workspace 锁：${workspaceDir}`;
@@ -224,12 +312,12 @@ export function createPromptOrchestrator({
         return { ok: false, cancelled: true };
       }
 
-      let result = await runTask({
+      const runPromptAttempt = async ({ promptText, phase }) => runTask({
         session,
         workspaceDir,
-        prompt: promptToRun,
+        prompt: promptText,
         onSpawn: (child) => {
-          setActiveRun(channelState, message, promptToRun, child, 'exec');
+          setActiveRun(channelState, message, promptText, child, phase);
           progress.sync({ forceEmit: true });
           if (channelState.cancelRequested) stopChildProcess(child);
         },
@@ -237,31 +325,57 @@ export function createPromptOrchestrator({
         onEvent: progress.onEvent,
         onLog: progress.onLog,
       });
-      if (preNotes.length) {
-        result.notes.unshift(...preNotes);
+
+      const retryEvents = [];
+      const retryNotes = [];
+      let attemptNumber = 1;
+      let result = await runPromptAttempt({
+        promptText: promptToRun,
+        phase: 'exec',
+      });
+
+      while (shouldAutoRetryResult(result) && attemptNumber < taskRetryPolicy.maxAttempts) {
+        const nextAttempt = attemptNumber + 1;
+        const previousSessionId = getSessionId(session);
+        if (previousSessionId) {
+          clearSessionId(session);
+          saveDb();
+          retryNotes.push(`已在第 ${nextAttempt}/${taskRetryPolicy.maxAttempts} 次尝试前自动重置旧会话：${previousSessionId}`);
+        }
+
+        const delayMs = computeRetryDelayMs(nextAttempt, taskRetryPolicy);
+        retryEvents.push({
+          failedAttempt: attemptNumber,
+          nextAttempt,
+          delayMs,
+          resetSessionId: previousSessionId || null,
+        });
+
+        setActiveRun(channelState, message, prompt, null, 'retry');
+        progress.setLatestStep(buildRetryProgressText({
+          language,
+          failedAttempt: attemptNumber,
+          nextAttempt,
+          maxAttempts: taskRetryPolicy.maxAttempts,
+          delayMs,
+          resetSessionId: previousSessionId || null,
+        }));
+        if (delayMs > 0) {
+          await sleep(delayMs);
+        }
+        if (channelState.cancelRequested) {
+          progressOutcome = { ok: false, cancelled: true, timedOut: false, error: 'cancelled by user' };
+          return { ok: false, cancelled: true };
+        }
+
+        result = await runPromptAttempt({
+          promptText: prompt,
+          phase: 'retry',
+        });
+        attemptNumber = nextAttempt;
       }
 
-      if (!result.ok && getSessionId(session) && !result.cancelled && !result.timedOut) {
-        const previous = getSessionId(session);
-        clearSessionId(session);
-        saveDb();
-        result = await runTask({
-          session,
-          workspaceDir,
-          prompt,
-          onSpawn: (child) => {
-            setActiveRun(channelState, message, prompt, child, 'retry');
-            progress.sync({ forceEmit: true });
-            if (channelState.cancelRequested) stopChildProcess(child);
-          },
-          wasCancelled: () => Boolean(channelState.cancelRequested || channelState.activeRun?.cancelRequested),
-          onEvent: progress.onEvent,
-          onLog: progress.onLog,
-        });
-        if (result.ok) {
-          result.notes.push(`已自动重置旧会话：${previous}`);
-        }
-      }
+      appendNotes(result, [...preNotes, ...retryNotes]);
 
       const inputTokens = extractInputTokensFromUsage(result.usage);
       let sessionDirty = false;
@@ -289,8 +403,14 @@ export function createPromptOrchestrator({
         const provider = getSessionProvider(session);
         const cliMissing = isCliNotFound(result.error);
         const timeoutSetting = resolveTimeoutSetting(session);
+        const retrySummaryLine = buildRetrySummaryLine({
+          attemptsUsed: attemptNumber,
+          maxAttempts: taskRetryPolicy.maxAttempts,
+          retryEvents,
+        });
         const failText = [
           result.timedOut ? `❌ ${getProviderShortName(provider)} 执行超时` : `❌ ${getProviderShortName(provider)} 执行失败`,
+          retrySummaryLine,
           result.error ? `• error: ${result.error}` : null,
           result.logs.length ? `• logs: ${truncate(result.logs.join('\n'), 1200)}` : null,
           result.timedOut

@@ -29,6 +29,9 @@ test('session-settings resolves timeout security profile and compact values with
     defaultUiLanguage: 'zh',
     securityProfile: 'team',
     codexTimeoutMs: 60_000,
+    taskMaxAttempts: 3,
+    taskRetryBaseDelayMs: 1000,
+    taskRetryMaxDelayMs: 8000,
     compactStrategy: 'native',
     compactOnThreshold: false,
     maxInputTokensBeforeCompact: 250_000,
@@ -49,6 +52,22 @@ test('session-settings resolves timeout security profile and compact values with
   });
   assert.deepEqual(settings.resolveTimeoutSetting({}), {
     timeoutMs: 60_000,
+    source: 'env default',
+  });
+  assert.deepEqual(settings.resolveTaskRetrySetting({
+    taskMaxAttempts: '4',
+    taskRetryBaseDelayMs: '1500',
+    taskRetryMaxDelayMs: '9000',
+  }), {
+    maxAttempts: 4,
+    baseDelayMs: 1500,
+    maxDelayMs: 9000,
+    source: 'session override',
+  });
+  assert.deepEqual(settings.resolveTaskRetrySetting({}), {
+    maxAttempts: 3,
+    baseDelayMs: 1000,
+    maxDelayMs: 8000,
     source: 'env default',
   });
   assert.deepEqual(settings.resolveCompactStrategySetting({ compactStrategy: 'hard' }), {

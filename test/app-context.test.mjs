@@ -16,6 +16,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
     getSessionLanguage: () => 'zh',
     getEffectiveSecurityProfile: () => 'team',
     resolveTimeoutSetting: () => ({ timeoutMs: 60000 }),
+    resolveTaskRetrySetting: () => ({ maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 8000 }),
     resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
     resolveCompactEnabledSetting: () => ({ enabled: true }),
     resolveCompactThresholdSetting: () => ({ tokens: 200000 }),
@@ -218,6 +219,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(calls.promptRuntime.runnerExecutorOptions.getSessionProvider, identity.getSessionProvider);
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.getSession, sessionStore.getSession);
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.resolveTimeoutSetting, sessionSettings.resolveTimeoutSetting);
+  assert.equal(calls.promptRuntime.promptOrchestratorOptions.resolveTaskRetrySetting, sessionSettings.resolveTaskRetrySetting);
   assert.equal(calls.promptRuntime.channelQueueOptions.resolveSecurityContext, securityPolicy.resolveSecurityContext);
   assert.equal(calls.promptRuntime.channelQueueOptions.getCurrentUserId, undefined);
   assert.match(

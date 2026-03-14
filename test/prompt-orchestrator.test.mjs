@@ -67,6 +67,7 @@ function createOrchestrator(overrides = {}) {
     getProviderDefaultBin: () => 'codex',
     getProviderBinEnvName: () => 'CODEX_BIN',
     resolveTimeoutSetting: () => ({ timeoutMs: 60_000, source: 'session override' }),
+    resolveTaskRetrySetting: () => ({ maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 8000, source: 'env default' }),
     resolveCompactStrategySetting: () => ({ strategy: 'hard', source: 'env default' }),
     resolveCompactEnabledSetting: () => ({ enabled: true, source: 'env default' }),
     resolveCompactThresholdSetting: () => ({ tokens: 200_000, source: 'env default' }),
@@ -112,6 +113,7 @@ function createOrchestrator(overrides = {}) {
     },
     extractInputTokensFromUsage: (usage) => usage?.input_tokens ?? null,
     composeFinalAnswerText: ({ finalAnswerMessages }) => finalAnswerMessages.join('\n\n'),
+    sleep: async () => {},
   };
 
   return {
@@ -180,7 +182,9 @@ test('createPromptOrchestrator.handlePrompt runs task updates session and replie
 
 test('createPromptOrchestrator.handlePrompt adds retry button after final failure', async () => {
   let runCount = 0;
+  const delays = [];
   const harness = createOrchestrator({
+    resolveTaskRetrySetting: () => ({ maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 2000, source: 'env default' }),
     runTask: async (options) => {
       runCount += 1;
       options.onSpawn?.({ pid: 456 });
@@ -197,6 +201,9 @@ test('createPromptOrchestrator.handlePrompt adds retry button after final failur
         threadId: null,
         usage: null,
       };
+    },
+    sleep: async (ms) => {
+      delays.push(ms);
     },
   });
   const { replyLog, progressCalls, orchestrator } = harness;
@@ -215,9 +222,11 @@ test('createPromptOrchestrator.handlePrompt adds retry button after final failur
   const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'fail this', channelState);
 
   assert.deepEqual(outcome, { ok: false, cancelled: false });
-  assert.equal(runCount, 2);
+  assert.equal(runCount, 3);
+  assert.deepEqual(delays, [1000, 2000]);
   assert.equal(typeof replyLog[0], 'object');
   assert.match(replyLog[0].content, /Codex 执行失败/);
+  assert.match(replyLog[0].content, /已自动重试 2 次/);
   assert.match(replyLog[0].content, /runner exploded/);
   assert.deepEqual(replyLog[0].components, [
     {
@@ -232,6 +241,8 @@ test('createPromptOrchestrator.handlePrompt adds retry button after final failur
       ],
     },
   ]);
+  assert.equal(progressCalls.some((entry) => entry.type === 'setLatestStep' && /第 1\/3 次尝试失败/.test(entry.text)), true);
+  assert.equal(progressCalls.some((entry) => entry.type === 'setLatestStep' && /第 2\/3 次尝试失败/.test(entry.text)), true);
   assert.deepEqual(progressCalls.at(-1), {
     type: 'finish',
     outcome: { ok: false, cancelled: false, timedOut: false, error: 'runner exploded' },

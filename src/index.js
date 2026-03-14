@@ -200,6 +200,12 @@ const DEFAULT_UI_LANGUAGE = normalizeUiLanguage(process.env.DEFAULT_UI_LANGUAGE 
 const ONBOARDING_ENABLED_DEFAULT = parseOptionalBool(process.env.ONBOARDING_ENABLED_DEFAULT);
 const ONBOARDING_ENABLED_BY_DEFAULT = ONBOARDING_ENABLED_DEFAULT === null ? true : ONBOARDING_ENABLED_DEFAULT;
 const CODEX_TIMEOUT_MS = normalizeTimeoutMs(process.env.CODEX_TIMEOUT_MS, 0);
+const TASK_MAX_ATTEMPTS = Math.max(1, toInt(process.env.TASK_MAX_ATTEMPTS, 3));
+const TASK_RETRY_BASE_DELAY_MS = Math.max(0, toInt(process.env.TASK_RETRY_BASE_DELAY_MS, 1000));
+const TASK_RETRY_MAX_DELAY_MS = Math.max(
+  TASK_RETRY_BASE_DELAY_MS,
+  toInt(process.env.TASK_RETRY_MAX_DELAY_MS, 8000),
+);
 const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const CLAUDE_BIN = (process.env.CLAUDE_BIN || 'claude').trim() || 'claude';
 const GEMINI_BIN = (process.env.GEMINI_BIN || 'gemini').trim() || 'gemini';
@@ -285,6 +291,9 @@ const appContext = createAppContext({
     defaultUiLanguage: DEFAULT_UI_LANGUAGE,
     securityProfile: SECURITY_PROFILE,
     codexTimeoutMs: CODEX_TIMEOUT_MS,
+    taskMaxAttempts: TASK_MAX_ATTEMPTS,
+    taskRetryBaseDelayMs: TASK_RETRY_BASE_DELAY_MS,
+    taskRetryMaxDelayMs: TASK_RETRY_MAX_DELAY_MS,
     compactStrategy: COMPACT_STRATEGY,
     compactOnThreshold: COMPACT_ON_THRESHOLD,
     maxInputTokensBeforeCompact: MAX_INPUT_TOKENS_BEFORE_COMPACT,

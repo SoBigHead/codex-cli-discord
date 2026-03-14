@@ -119,6 +119,7 @@ export function createAppContext({
       getSessionProvider: identity.getSessionProvider,
       getSessionLanguage: sessionSettings.getSessionLanguage,
       resolveTimeoutSetting: sessionSettings.resolveTimeoutSetting,
+      resolveTaskRetrySetting: sessionSettings.resolveTaskRetrySetting,
       resolveCompactStrategySetting: sessionSettings.resolveCompactStrategySetting,
       resolveCompactEnabledSetting: sessionSettings.resolveCompactEnabledSetting,
       resolveCompactThresholdSetting: sessionSettings.resolveCompactThresholdSetting,
