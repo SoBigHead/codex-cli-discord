@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 The format is based on Keep a Changelog and this project follows Semantic Versioning.
 
+## [0.6.0] - 2026-03-15
+
+### Added
+- Provider-native runtime surface metadata for Codex, Claude, and Gemini, including session vocabulary, compact capabilities, reasoning-effort support, and runtime-store descriptions.
+- Provider-specific session aliases and help surfaces such as `rollout_sessions` / `project_sessions` / `chat_sessions` and matching `resume` aliases.
+- Provider-scoped session persistence buckets so model, effort, compact config, raw config overrides, and bound session IDs survive provider switches instead of clobbering each other.
+- macOS `launchctl` guard + safe restart helper for protected bot services, with regression coverage for blocked and rewritten service operations.
+
+### Changed
+- Compact defaults now prefer provider-native compaction where supported, and status/help/doctor output now explains which compact knobs are actually available on the active provider.
+- Session, workspace, and resume messaging now uses provider-native terminology such as rollout session, project session, and chat session.
+- README, English README, and `.env.example` now document provider-specific aliases, access controls, runtime behavior, and safer local service operations.
+
+### Fixed
+- Retried Discord interaction reply/edit/follow-up/defer flows to reduce transient network failures and interaction timeout regressions.
+- Stopped Claude assistant snapshots and structured stream deltas from leaking into the public progress card as fake "process content".
+- Final progress cards now end in a stable `done` phase with a clearer terminal latest-step message.
+
 ## [0.5.0] - 2026-03-14
 
 ### Added

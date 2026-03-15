@@ -15,6 +15,10 @@
 - Slash 命令（不需要 `!` 前缀）
 - 按线程持久化会话（重启后可恢复）
 - 灵活 workspace 模型：thread 覆盖、provider 默认目录，以及 legacy 每线程回退目录
+- Provider-aware runtime surface：
+  - Codex：rollout sessions、全局 `~/.codex/sessions` 历史、支持 raw config passthrough、支持 `native_limit`
+  - Claude：project sessions、可跨 workspace 继续的 resume、native compact 走 provider 默认行为
+  - Gemini：chat sessions、按 workspace 绑定 resume、native compact 走 provider 默认行为
 - 运行时自愈：Discord/运行时出现瞬时故障后自动退避重登
 - workspace 级串行保护：同一个 workspace 不会在不同频道 / 不同 bot 中并发执行
 - 两种模式：
@@ -67,15 +71,14 @@ Git hooks 说明：
 - `/cx_setdir <path|default|status>` - 设置或清除当前线程的 workspace
 - `/cx_setdefaultdir <path|clear|status>` - 设置当前 provider 的默认 workspace
 - `/cx_model <name|default>` - 设置模型覆盖
-- `/cx_effort <high|medium|low|default>` - 设置推理强度
-- `/cx_effort <xhigh|high|medium|low|default>` - 设置 reasoning effort
-- `/cx_compact key:<status|strategy|token_limit|native_limit|enabled|reset> value:<...>` - 配置当前频道 compact（默认推荐 `native`；`native_limit` 仅在 provider 暴露原生 limit 覆盖时可用）
+- `/cx_effort <...>` - 设置 reasoning effort；Codex 支持 `xhigh|high|medium|low|default`，Claude 支持 `high|medium|low|default`，Gemini 不暴露该命令
+- `/cx_compact key:<...> value:<...>` - 配置当前频道 compact；三家 provider 都支持 `strategy|token_limit|enabled|reset|status`，`native_limit` 仅在 provider 暴露原生 limit 覆盖时可用（当前主要是 Codex）
 - `/cx_mode <safe|dangerous>` - 设置执行模式
 - `/cx_name <label>` - 命名会话（用于显示）
 - `/cx_new` - 切到新会话，但保留当前频道配置
 - `/cx_reset` - 清空当前线程会话与额外配置
 - `/cx_resume <session_id>` - 绑定已有 provider 会话 ID
-- `/cx_sessions` - 列出本地最近 provider 会话
+- `/cx_sessions` - 列出 provider 原生运行时里的最近会话
 - `/cx_queue` - 查看当前频道运行中/排队任务数量
 - `/cx_doctor` - 查看 Bot 运行/安全体检信息
 - `/cx_onboarding` - 交互式新用户引导（分步按钮，ephemeral）
@@ -87,13 +90,20 @@ Git hooks 说明：
 - `/cx_abort` - 中断当前运行并清空队列
 - `/cx_cancel` - 中断当前运行并清空队列
 
+provider 原生命名 alias：
+
+- Codex：`/cx_rollout_sessions`、`/cx_rollout_resume`
+- Claude：`/cc_project_sessions`、`/cc_project_resume`
+- Gemini：`/gm_chat_sessions`、`/gm_chat_resume`
+- 通用的 `/cx_sessions`、`/cx_resume`、`!sessions`、`!resume` 仍然保留；独立 bot 会自动把帮助文案收窄到当前 provider 的原生命名
+
 如果你希望 **Codex / Claude / Gemini 绑定不同 Discord bot**，现在改成只用一个 `.env`，但在文件里分段分组：
 
 ```bash
 # 首次准备
 cp .env.example .env
 
-# 启动两个独立 bot
+# 启动各自独立的 bot
 npm run start:codex
 npm run start:claude
 npm run start:gemini
@@ -107,7 +117,7 @@ npm run start:gemini
 
 关键项：
 
-- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`：限制可用范围（推荐）
+- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`：限制可用范围（推荐）；锁定 provider 的 bot 也支持 `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `GEMINI__ALLOWED_*`
 - 共享 `.env` key：只放 Discord / 运行时配置（`ALLOWED_*`、`WORKSPACE_ROOT`、`DEFAULT_WORKSPACE_DIR`、代理等）
 - `CODEX__*`：同一个 `.env` 里的 Codex bot 分组（通常只需要 `CODEX__DISCORD_TOKEN`，以及按需填写 `CODEX__DEFAULT_MODEL`、`CODEX__DEFAULT_MODE`、`CODEX__DEFAULT_WORKSPACE_DIR`、`CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`、`CODEX__CODEX_BIN`）
 - `CLAUDE__*`：同一个 `.env` 里的 Claude bot 分组（通常只需要 `CLAUDE__DISCORD_TOKEN`，以及按需填写 `CLAUDE__DEFAULT_MODEL`、`CLAUDE__DEFAULT_MODE`、`CLAUDE__DEFAULT_WORKSPACE_DIR`、`CLAUDE__CLAUDE_BIN`）
@@ -130,12 +140,12 @@ npm run start:gemini
   - 把 `.env` 里的 `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `GEMINI__DEFAULT_MODE` 改回 `safe`，只在需要的频道用 `/cx_mode dangerous` 开启
   - 或者在只对自己可见的服务器里跑 `dangerous`，避免误操作影响团队
 - `DEFAULT_WORKSPACE_DIR`：所有 provider 共用的默认 workspace（可选）
-- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `GEMINI__DEFAULT_WORKSPACE_DIR`：provider 级默认 workspace
+- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `GEMINI__DEFAULT_WORKSPACE_DIR`：provider 级默认 workspace，会覆盖共享默认值
 - `WORKSPACE_ROOT`：仅在未配置 thread 覆盖与 provider 默认目录时，作为 legacy 回退目录根路径
 - `CODEX_BIN`：codex 命令/路径（默认 `codex`）
 - `CLAUDE_BIN`：claude 命令/路径（默认 `claude`）
 - `GEMINI_BIN`：gemini 命令/路径（默认 `gemini`）
-- `CODEX_TIMEOUT_MS`：单次 codex 运行硬超时（毫秒），`0` 表示禁用超时
+- `CODEX_TIMEOUT_MS`：默认 runner 硬超时（毫秒），当前三家 provider 共用这一个默认值；`0` 表示禁用超时，频道内可再用 `/cx_timeout` / `!timeout` 覆盖
 - `PROGRESS_UPDATES_ENABLED`：是否启用频道实时进度更新（默认 `true`）
 - `PROGRESS_UPDATE_INTERVAL_MS`：进度消息心跳刷新间隔
 - `PROGRESS_EVENT_FLUSH_MS`：事件触发进度编辑的最小间隔
@@ -151,7 +161,7 @@ npm run start:gemini
 - `MAX_INPUT_TOKENS_BEFORE_COMPACT`：触发 compact 的阈值
 - `COMPACT_STRATEGY`：`hard | native | off`（默认 `native`）
   - `hard`：Bot 先总结，再切换到新会话
-  - `native`：给 Codex CLI 传 `model_auto_compact_token_limit`，继续同一会话
+  - `native`：走 provider 原生 compact，继续同一会话
   - `off`：关闭 compact 行为
 - 也可以通过 `/cx_compact` 或 `!compact` 在频道级覆盖 compact strategy
 - `COMPACT_ON_THRESHOLD`：是否启用阈值触发的 compact 逻辑
@@ -203,6 +213,11 @@ CODEX_UPGRADE_DRY_RUN=1 npm run run:auto-upgrade
 
 - 升级服务 label：`com.atou.agents-in-discord.auto-upgrade`（`LABEL`）
 - Bot 服务 label：`com.atou.agents-in-discord`（`BOT_LABEL`）
+
+手动管理 bot 服务时注意：
+
+- 运行时会把受保护 bot label 的危险 `launchctl` 操作拦住或改写到安全重启 helper
+- 推荐直接运行 `scripts/restart-discord-bot-service.sh <codex|claude|gemini|all>`
 
 查看服务与日志：
 

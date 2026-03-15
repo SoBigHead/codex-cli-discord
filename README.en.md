@@ -15,6 +15,10 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, an
 - Slash commands (no `!` required)
 - Thread-level session persistence (restart-safe)
 - Flexible workspace model: thread override, provider default, plus legacy per-thread fallback
+- Provider-aware runtime surface:
+  - Codex: rollout sessions, global `~/.codex/sessions` history, raw config passthrough, configurable `native_limit`
+  - Claude: project sessions, portable resume across workspaces, provider-default native compaction
+  - Gemini: chat sessions, workspace-bound resume, provider-default native compaction
 - Self-healing runtime: auto relogin with backoff after transient Discord/runtime failures
 - Workspace-level serialization so the same workspace is never executed concurrently across channels/bots
 - Two modes:
@@ -31,7 +35,7 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, an
   - `/onboarding` interactive onboarding wizard (buttons + direct config), `!onboarding` text fallback
   - per-thread onboarding switch (`on/off/status`) and message language (`zh/en`, default `zh`)
   - per-thread security profile override (`auto|solo|team|public`)
-  - per-thread codex timeout override (`ms|off|status`)
+  - per-thread runner timeout override (`ms|off|status`)
 
 ## Prerequisites
 
@@ -67,25 +71,31 @@ Then in your Discord server, invite the bot, and use these slash commands. Examp
 - `/cx_setdir <path|default|status>` — set or clear workspace for current thread
 - `/cx_setdefaultdir <path|clear|status>` — set provider default workspace
 - `/cx_model <name|default>` — set model override
-- `/cx_effort <high|medium|low|default>` — set reasoning effort
-- `/cx_effort <xhigh|high|medium|low|default>` — set reasoning effort
-- `/cx_compact key:<status|strategy|token_limit|native_limit|enabled|reset> value:<...>` — configure compact for the current channel (default recommendation: `native`; `native_limit` only works when the provider exposes a native limit override)
+- `/cx_effort <...>` — set reasoning effort; Codex supports `xhigh|high|medium|low|default`, Claude supports `high|medium|low|default`, and Gemini does not expose this command
+- `/cx_compact key:<...> value:<...>` — configure compact for the current channel; all three providers support `strategy|token_limit|enabled|reset|status`, while `native_limit` only works where the provider exposes a native limit override (currently mainly Codex)
 - `/cx_mode <safe|dangerous>` — set execution mode
 - `/cx_name <label>` — name the session (for display)
 - `/cx_new` — switch to a fresh session while keeping current channel settings
 - `/cx_reset` — clear current thread session and extra config overrides
-- `/cx_resume <session_id>` — bind an existing Codex session id
-- `/cx_sessions` — list recent local Codex sessions
+- `/cx_resume <session_id>` — bind an existing provider-native session id
+- `/cx_sessions` — list recent provider-native sessions from the runtime store
 - `/cx_queue` — show running/queued task count in current channel
 - `/cx_doctor` — show bot runtime/security diagnostics
 - `/cx_onboarding` — interactive onboarding (step-by-step buttons, ephemeral)
 - `/cx_onboarding_config <on|off|status>` — configure onboarding availability in current channel
 - `/cx_language <中文|English>` — set bot message hint language in current channel
 - `/cx_profile <auto|solo|team|public|status>` — set or view current channel security profile override
-- `/cx_timeout <ms|off|status>` — set current channel codex timeout override
+- `/cx_timeout <ms|off|status>` — set current channel runner timeout override
 - `/cx_progress` — show latest progress snapshot for the running task
 - `/cx_abort` — interrupt current run and clear queued prompts
 - `/cx_cancel` — interrupt current run and clear queued prompts
+
+Provider-native session aliases:
+
+- Codex: `/cx_rollout_sessions`, `/cx_rollout_resume`
+- Claude: `/cc_project_sessions`, `/cc_project_resume`
+- Gemini: `/gm_chat_sessions`, `/gm_chat_resume`
+- The canonical `/cx_sessions`, `/cx_resume`, `!sessions`, and `!resume` still work; dedicated bots narrow the help text to the current provider's native terminology
 
 If you want **separate Discord bots** for Codex, Claude, and Gemini, keep everything in one `.env`, but group provider-specific values with clear prefixes:
 
@@ -107,7 +117,7 @@ See `.env.example`.
 
 Important knobs:
 
-- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended)
+- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `GEMINI__ALLOWED_*`
 - Shared `.env` keys: Discord/runtime settings only (`ALLOWED_*`, `WORKSPACE_ROOT`, `DEFAULT_WORKSPACE_DIR`, proxy, etc.)
 - `CODEX__*`: Codex bot section in the same `.env` (normally `CODEX__DISCORD_TOKEN`, plus optional `CODEX__DEFAULT_MODEL`, `CODEX__DEFAULT_MODE`, `CODEX__DEFAULT_WORKSPACE_DIR`, `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`, `CODEX__CODEX_BIN`)
 - `CLAUDE__*`: Claude bot section in the same `.env` (normally `CLAUDE__DISCORD_TOKEN`, plus optional `CLAUDE__DEFAULT_MODEL`, `CLAUDE__DEFAULT_MODE`, `CLAUDE__DEFAULT_WORKSPACE_DIR`, `CLAUDE__CLAUDE_BIN`)
@@ -115,10 +125,6 @@ Important knobs:
 - `BOT_PROVIDER`: leave empty for shared mode, or set `codex` / `claude` / `gemini` to lock one bot instance to a single provider; `npm run start:codex` / `npm run start:claude` / `npm run start:gemini` set this automatically
 - `ENV_FILE`: optional extra overlay file if you really need one, but the normal setup is now a single grouped `.env`
 - `DISCORD_TOKEN_CODEX` / `DISCORD_TOKEN_CLAUDE` / `DISCORD_TOKEN_GEMINI`: legacy fallback for older single-file setups
-- `COMPACT_STRATEGY`: `hard | native | off` (default: `native`)
-- Channel-level compact config supports `strategy`, `token_limit`, `native_limit`, `enabled`, `reset`, and `status`
-  - All three providers support `native`
-  - `native_limit` only applies where the CLI exposes a native token-limit override surface (currently mainly Codex)
 - Provider auth is outside this project's config surface; keep CLI-specific login or secrets outside this `.env` unless you intentionally need them for your own runtime
 - `SECURITY_PROFILE`: `auto | solo | team | public`
   - `auto`: DM -> `solo`; guild channel where `@everyone` can view -> `public`; else `team`
@@ -127,18 +133,18 @@ Important knobs:
 - `ENABLE_CONFIG_CMD`: enable/disable `!config` command (default `false`)
 - `CONFIG_ALLOWLIST`: allowed keys for `!config key=value` (comma-separated, or `*` to allow all)
 - `SLASH_PREFIX`: shared/global slash prefix; default `cx` in shared mode (e.g. `/cx_status`)
-- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx` for Codex and `cc` for Claude
+- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `GEMINI__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx` for Codex, `cc` for Claude, and `gm` for Gemini
 - `DEFAULT_UI_LANGUAGE`: default bot message language for new channels (`zh` or `en`, default `zh`)
 - `ONBOARDING_ENABLED_DEFAULT`: onboarding default for new channels (`true` or `false`, default `true`)
 - `DEFAULT_MODE`: `safe` or `dangerous`; the example `.env` now uses **`dangerous` by default** so local devs get full power out of the box. For shared / prod servers you should:
   - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `GEMINI__DEFAULT_MODE` back to `safe` in `.env`, and only enable `/cx_mode dangerous` in trusted channels; or
   - run the bot in a private guild where you trust all members
-- `DEFAULT_WORKSPACE_DIR`: optional shared default workspace for both providers
-- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR`: provider-specific default workspace roots
+- `DEFAULT_WORKSPACE_DIR`: optional shared default workspace for all providers
+- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `GEMINI__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
 - `WORKSPACE_ROOT`: legacy fallback root used only when neither thread override nor provider default is configured
 - `CODEX_BIN`: codex command/path (default `codex`)
 - `CLAUDE_BIN`: claude command/path (default `claude`)
-- `CODEX_TIMEOUT_MS`: hard timeout per codex run (ms). `0` disables timeout.
+- `CODEX_TIMEOUT_MS`: default runner hard timeout (ms). Today all three providers share this default; `0` disables timeout, and `/cx_timeout` / `!timeout` can still override it per thread.
 - `PROGRESS_UPDATES_ENABLED`: enable/disable live progress updates in channel (default `true`)
 - `PROGRESS_UPDATE_INTERVAL_MS`: heartbeat refresh interval for progress message
 - `PROGRESS_EVENT_FLUSH_MS`: min interval for event-triggered progress edits
@@ -156,7 +162,7 @@ Important knobs:
 - `MAX_INPUT_TOKENS_BEFORE_COMPACT`: compact threshold
 - `COMPACT_STRATEGY`: `hard | native | off`
   - `hard`: bot summarizes then switches to a new session
-  - `native`: pass `model_auto_compact_token_limit` to Codex CLI and continue same session
+  - `native`: use provider-native compaction and continue the same session
   - `off`: disable compact behavior
 - You can also override compact strategy per channel with `/cx_compact` or `!compact`
 - `COMPACT_ON_THRESHOLD`: enable/disable threshold-triggered compact logic
@@ -206,6 +212,11 @@ Default IDs:
 
 - Upgrade service label: `com.atou.agents-in-discord.auto-upgrade` (`LABEL`)
 - Bot service label: `com.atou.agents-in-discord` (`BOT_LABEL`)
+
+If you manage bot services manually:
+
+- The runtime now blocks dangerous `launchctl` operations for protected bot labels, or rewrites them to a safe restart helper
+- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|gemini|all>`
 
 Check service and logs:
 
