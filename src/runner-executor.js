@@ -46,7 +46,7 @@ export function createRunnerExecutor({
     isFinalAnswerLikeAgentMessage,
   });
 
-  async function runCodex({ session, workspaceDir, prompt, onSpawn, wasCancelled, onEvent, onLog }) {
+  async function runProviderTask({ session, workspaceDir, prompt, onSpawn, wasCancelled, onEvent, onLog }) {
     ensureDir(workspaceDir);
 
     const provider = getSessionProvider(session);
@@ -295,7 +295,8 @@ export function createRunnerExecutor({
   }
 
   return {
-    runCodex,
+    runProviderTask,
+    runCodex: runProviderTask,
     buildSessionRunnerArgs,
   };
 }

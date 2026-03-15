@@ -3,9 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
   buildRunnerArgs,
+  getProviderCompactCapabilities,
   getProviderDisplayName,
   getProviderShortName,
   normalizeCliProvider,
+  providerSupportsCompactStrategy,
+  providerSupportsRawConfigOverrides,
   providerSupportsConfigOverrides,
   providerSupportsNativeCompact,
 } from '../src/provider-utils.js';
@@ -30,13 +33,18 @@ test('provider labels are readable', () => {
   assert.equal(getProviderShortName('gemini'), 'Gemini');
 });
 
-test('provider capabilities distinguish codex-only features', () => {
+test('provider capabilities distinguish shared native compact vs codex-only passthroughs', () => {
+  assert.equal(providerSupportsRawConfigOverrides('codex'), true);
+  assert.equal(providerSupportsRawConfigOverrides('claude'), false);
   assert.equal(providerSupportsConfigOverrides('codex'), true);
   assert.equal(providerSupportsConfigOverrides('claude'), false);
   assert.equal(providerSupportsConfigOverrides('gemini'), false);
+  assert.equal(providerSupportsCompactStrategy('claude', 'hard'), true);
+  assert.equal(providerSupportsCompactStrategy('claude', 'native'), true);
+  assert.deepEqual(getProviderCompactCapabilities('gemini').strategies, ['hard', 'native', 'off']);
   assert.equal(providerSupportsNativeCompact('codex'), true);
-  assert.equal(providerSupportsNativeCompact('claude'), false);
-  assert.equal(providerSupportsNativeCompact('gemini'), false);
+  assert.equal(providerSupportsNativeCompact('claude'), true);
+  assert.equal(providerSupportsNativeCompact('gemini'), true);
 });
 
 test('buildRunnerArgs keeps codex resume behavior', () => {

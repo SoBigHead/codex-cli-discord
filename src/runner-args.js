@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { createClaudeProviderAdapter } from './providers/claude.js';
+import { createCodexProviderAdapter } from './providers/codex.js';
+import { createGeminiProviderAdapter } from './providers/gemini.js';
+import { createProviderAdapterRegistry } from './providers/index.js';
 
 export function uniqueDirs(dirs = []) {
   const out = [];
@@ -16,19 +20,30 @@ export function createRunnerArgsBuilder({
   defaultModel = null,
   normalizeProvider = (value) => String(value || '').trim().toLowerCase(),
   getSessionId = () => null,
-  resolveCompactStrategySetting = () => ({ strategy: 'hard' }),
+  resolveCompactStrategySetting = () => ({ strategy: 'native' }),
   resolveCompactEnabledSetting = () => ({ enabled: false }),
   resolveNativeCompactTokenLimitSetting = () => ({ tokens: 0 }),
 } = {}) {
+  const providerAdapters = createProviderAdapterRegistry([
+    createCodexProviderAdapter({
+      buildArgs: ({ session, workspaceDir, prompt }) => buildCodexArgs({ session, workspaceDir, prompt }),
+    }),
+    createClaudeProviderAdapter({
+      buildArgs: ({ session, workspaceDir, prompt, additionalWorkspaceDirs = [] }) => buildClaudeArgs({
+        session,
+        workspaceDir,
+        prompt,
+        additionalWorkspaceDirs,
+      }),
+    }),
+    createGeminiProviderAdapter({
+      buildArgs: ({ session, prompt }) => buildGeminiArgs({ session, prompt }),
+    }),
+  ]);
+
   function buildSessionRunnerArgs({ provider, session, workspaceDir, prompt, additionalWorkspaceDirs = [] }) {
-    switch (normalizeProvider(provider)) {
-      case 'claude':
-        return buildClaudeArgs({ session, workspaceDir, prompt, additionalWorkspaceDirs });
-      case 'gemini':
-        return buildGeminiArgs({ session, prompt });
-      default:
-        return buildCodexArgs({ session, workspaceDir, prompt });
-    }
+    const adapter = providerAdapters.get(provider);
+    return adapter.runtime.buildArgs({ session, workspaceDir, prompt, additionalWorkspaceDirs });
   }
 
   function buildCodexArgs({ session, workspaceDir, prompt }) {

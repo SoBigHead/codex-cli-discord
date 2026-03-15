@@ -6,9 +6,18 @@ const PROVIDER_METADATA = Object.freeze({
     defaultBin: 'codex',
     binEnvName: 'CODEX_BIN',
     defaultSlashPrefix: 'cx',
-    supportsConfigOverrides: true,
-    supportsNativeCompact: true,
-    bindsSessionsToWorkspace: true,
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze(['low', 'medium', 'high', 'xhigh']),
+      rawConfigOverrides: Object.freeze({
+        supported: true,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'native', 'off']),
+        supportsNativeStrategy: true,
+        supportsNativeLimit: true,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
   }),
   claude: Object.freeze({
     aliases: Object.freeze(['claude', 'anthropic']),
@@ -17,9 +26,18 @@ const PROVIDER_METADATA = Object.freeze({
     defaultBin: 'claude',
     binEnvName: 'CLAUDE_BIN',
     defaultSlashPrefix: 'cc',
-    supportsConfigOverrides: false,
-    supportsNativeCompact: false,
-    bindsSessionsToWorkspace: false,
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze(['low', 'medium', 'high']),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'native', 'off']),
+        supportsNativeStrategy: true,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'portable',
+    }),
   }),
   gemini: Object.freeze({
     aliases: Object.freeze(['gemini', 'google']),
@@ -28,11 +46,24 @@ const PROVIDER_METADATA = Object.freeze({
     defaultBin: 'gemini',
     binEnvName: 'GEMINI_BIN',
     defaultSlashPrefix: 'gm',
-    supportsConfigOverrides: false,
-    supportsNativeCompact: false,
-    bindsSessionsToWorkspace: true,
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze([]),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'native', 'off']),
+        supportsNativeStrategy: true,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
   }),
 });
+
+function normalizeCompactStrategyValue(value) {
+  return String(value || '').trim().toLowerCase();
+}
 
 function findProviderByAlias(value) {
   const raw = String(value || '').trim().toLowerCase();
@@ -62,6 +93,10 @@ export function getProviderMetadata(provider) {
   return PROVIDER_METADATA[normalized] || PROVIDER_METADATA.codex;
 }
 
+export function getProviderCapabilities(provider) {
+  return getProviderMetadata(provider).capabilities;
+}
+
 export function getProviderDisplayName(provider) {
   return getProviderMetadata(provider).displayName;
 }
@@ -83,36 +118,131 @@ export function getProviderDefaultSlashPrefix(provider = null) {
   return getProviderMetadata(normalized).defaultSlashPrefix;
 }
 
+export function providerSupportsRawConfigOverrides(provider) {
+  return getProviderCapabilities(provider).rawConfigOverrides.supported;
+}
+
 export function providerSupportsConfigOverrides(provider) {
-  return getProviderMetadata(provider).supportsConfigOverrides;
+  return providerSupportsRawConfigOverrides(provider);
+}
+
+export function getProviderCompactCapabilities(provider) {
+  return getProviderCapabilities(provider).compact;
 }
 
 export function providerSupportsNativeCompact(provider) {
-  return getProviderMetadata(provider).supportsNativeCompact;
+  return getProviderCompactCapabilities(provider).supportsNativeStrategy;
+}
+
+export function getSupportedCompactStrategies(provider) {
+  return [...getProviderCompactCapabilities(provider).strategies];
+}
+
+export function providerSupportsCompactStrategy(provider, strategy) {
+  const normalizedStrategy = normalizeCompactStrategyValue(strategy);
+  if (!normalizedStrategy) return true;
+  return getSupportedCompactStrategies(provider).includes(normalizedStrategy);
+}
+
+export function providerSupportsCompactConfigAction(provider, action) {
+  if (!action || action.type === 'status' || action.type === 'reset') return true;
+  if (action.type === 'set_strategy') {
+    return providerSupportsCompactStrategy(provider, action.strategy);
+  }
+  if (action.type === 'set_native_limit') {
+    return getProviderCompactCapabilities(provider).supportsNativeLimit;
+  }
+  return true;
+}
+
+export function formatCompactConfigUnsupported(provider, action, language = 'en') {
+  const displayName = getProviderDisplayName(provider);
+  const compact = getProviderCompactCapabilities(provider);
+  const strategyList = compact.strategies
+    .filter((value) => value !== 'native')
+    .map((value) => `\`${value}\``)
+    .join(', ');
+
+  if (action?.type === 'set_strategy' && normalizeCompactStrategyValue(action.strategy) === 'native') {
+    if (language === 'en') {
+      return `⚠️ Current provider ${displayName} does not expose \`native\` compaction. Use ${strategyList} instead.`;
+    }
+    return `⚠️ 当前 provider ${displayName} 不支持 \`native\` 压缩。请改用 ${strategyList}。`;
+  }
+
+  if (action?.type === 'set_native_limit') {
+    if (language === 'en') {
+      return `⚠️ Current provider ${displayName} does not expose a configurable \`native_limit\`. Native compaction can still run with the provider default behavior.`;
+    }
+    return `⚠️ 当前 provider ${displayName} 没有暴露可配置的 \`native_limit\`。native 压缩仍可按 provider 默认行为运行。`;
+  }
+
+  if (language === 'en') {
+    return `⚠️ Current provider ${displayName} does not support this compact setting.`;
+  }
+  return `⚠️ 当前 provider ${displayName} 不支持这个 compact 配置。`;
+}
+
+export function getProviderSessionWorkspacePolicy(provider) {
+  return getProviderCapabilities(provider).workspaceSessionPolicy;
+}
+
+export function providerRequiresWorkspaceBoundSession(provider) {
+  return getProviderSessionWorkspacePolicy(provider) === 'strict';
 }
 
 export function providerBindsSessionsToWorkspace(provider) {
-  return getProviderMetadata(provider).bindsSessionsToWorkspace;
+  return providerRequiresWorkspaceBoundSession(provider);
+}
+
+export function formatWorkspaceSessionPolicy(provider, language = 'en') {
+  const displayName = getProviderDisplayName(provider);
+  if (providerRequiresWorkspaceBoundSession(provider)) {
+    if (language === 'en') {
+      return `${displayName} sessions are treated as workspace-scoped; changing workspace resets the bound session.`;
+    }
+    return `${displayName} 的 session 按 workspace 绑定处理；切换 workspace 时会重置已绑定 session。`;
+  }
+  if (language === 'en') {
+    return `${displayName} sessions are treated as portable; changing workspace keeps the bound session when possible.`;
+  }
+  return `${displayName} 的 session 按可迁移处理；切换 workspace 时会尽量保留已绑定 session。`;
+}
+
+export function formatWorkspaceSessionResetReason(provider, language = 'en') {
+  const displayName = getProviderDisplayName(provider);
+  if (providerRequiresWorkspaceBoundSession(provider)) {
+    if (language === 'en') {
+      return `reset because ${displayName} sessions are treated as workspace-scoped`;
+    }
+    return `已重置（${displayName} 的 session 按 workspace 绑定处理）`;
+  }
+  if (language === 'en') {
+    return `kept because ${displayName} sessions are treated as portable`;
+  }
+  return `已保留（${displayName} 的 session 按可迁移处理）`;
+}
+
+export function getSupportedReasoningEffortLevels(provider) {
+  return [...getProviderCapabilities(provider).reasoningEffortLevels];
 }
 
 export function isReasoningEffortSupported(provider, effort) {
   if (!effort) return true;
-  const normalizedProvider = normalizeProvider(provider);
-  if (normalizedProvider === 'codex') return true;
-  if (normalizedProvider === 'claude') return effort !== 'xhigh';
-  return false;
+  return getSupportedReasoningEffortLevels(provider).includes(String(effort || '').trim().toLowerCase());
 }
 
 export function formatReasoningEffortUnsupported(provider, language = 'en') {
   const displayName = getProviderDisplayName(provider);
-  if (normalizeProvider(provider) === 'gemini') {
+  const levels = getSupportedReasoningEffortLevels(provider);
+  if (!levels.length) {
     if (language === 'en') {
-      return `⚠️ Reasoning effort is not currently supported for Gemini CLI. Current provider: ${displayName}.`;
+      return `⚠️ Reasoning effort is not currently exposed for ${displayName}.`;
     }
-    return `⚠️ Gemini CLI 当前不支持 reasoning effort。当前 provider：${displayName}。`;
+    return `⚠️ ${displayName} 当前不支持 reasoning effort。`;
   }
   if (language === 'en') {
-    return `⚠️ \`xhigh\` is currently only supported for Codex CLI. Current provider: ${displayName}.`;
+    return `⚠️ ${displayName} supports ${levels.map((level) => `\`${level}\``).join(', ')}.`;
   }
-  return `⚠️ \`xhigh\` 目前仅支持 Codex CLI。当前 provider：${displayName}。`;
+  return `⚠️ ${displayName} 当前支持 ${levels.map((level) => `\`${level}\``).join('、')}。`;
 }

@@ -42,10 +42,11 @@ export function createPromptRuntime({
   } = channelRuntimeStore;
 
   const { startSessionProgressBridge } = createSessionProgressBridgeFactoryFn(sessionProgressBridgeOptions);
-  const { runCodex } = createRunnerExecutorFn({
+  const runnerExecutor = createRunnerExecutorFn({
     ...runnerExecutorOptions,
     startSessionProgressBridge,
   });
+  const runProviderTask = runnerExecutor.runProviderTask || runnerExecutor.runCodex;
   const createProgressReporter = createPromptProgressReporterFactoryFn({
     ...promptOrchestratorOptions,
     presentation,
@@ -55,7 +56,7 @@ export function createPromptRuntime({
     createProgressReporter,
     formatTimeoutLabel: presentation.formatTimeoutLabel,
     setActiveRun,
-    runTask: (options) => runCodex(options),
+    runTask: (options) => runProviderTask(options),
   });
   const { enqueuePrompt, retryLastPrompt } = createChannelQueueFn({
     ...channelQueueOptions,
@@ -76,7 +77,8 @@ export function createPromptRuntime({
     cancelAllChannelWork,
     getRuntimeSnapshot,
     handlePrompt,
-    runCodex,
+    runProviderTask,
+    runCodex: runnerExecutor.runCodex || runProviderTask,
     startSessionProgressBridge,
   };
 }

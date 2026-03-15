@@ -49,7 +49,7 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
   };
   const runnerCalls = [];
   const runnerExecutor = {
-    runCodex: async (options) => {
+    runProviderTask: async (options) => {
       runnerCalls.push(options);
       return { ok: true, options };
     },
@@ -144,6 +144,7 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
   assert.equal(runtime.cancelAllChannelWork, channelRuntimeStore.cancelAllChannelWork);
   assert.equal(runtime.formatRuntimeLabel, presentation.formatRuntimeLabel);
   assert.equal(runtime.formatPermissionsLabel, presentation.formatPermissionsLabel);
-  assert.equal(runtime.runCodex, runnerExecutor.runCodex);
+  assert.equal(runtime.runProviderTask, runnerExecutor.runProviderTask);
+  assert.equal(runtime.runCodex, runnerExecutor.runProviderTask);
   assert.equal(runtime.startSessionProgressBridge, bridgeFactory.startSessionProgressBridge);
 });

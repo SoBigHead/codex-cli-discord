@@ -1,23 +1,31 @@
+import { createClaudeProviderAdapter } from './providers/claude.js';
+import { createCodexProviderAdapter } from './providers/codex.js';
+import { createGeminiProviderAdapter } from './providers/gemini.js';
+import { createProviderAdapterRegistry } from './providers/index.js';
+
 export function createRunnerEventParser({
   normalizeProvider = (value) => String(value || '').trim().toLowerCase(),
   extractAgentMessageText = () => '',
   isFinalAnswerLikeAgentMessage = () => true,
 } = {}) {
+  const providerAdapters = createProviderAdapterRegistry([
+    createCodexProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handleCodexRunnerEvent(event, state, ensureSessionBridge, {
+        extractAgentMessageText,
+        isFinalAnswerLikeAgentMessage,
+      }),
+    }),
+    createClaudeProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handleClaudeRunnerEvent(event, state, ensureSessionBridge),
+    }),
+    createGeminiProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handleGeminiRunnerEvent(event, state, ensureSessionBridge),
+    }),
+  ]);
+
   return function handleRunnerEvent(provider, event, state, ensureSessionBridge) {
-    switch (normalizeProvider(provider)) {
-      case 'claude':
-        handleClaudeRunnerEvent(event, state, ensureSessionBridge);
-        break;
-      case 'gemini':
-        handleGeminiRunnerEvent(event, state, ensureSessionBridge);
-        break;
-      default:
-        handleCodexRunnerEvent(event, state, ensureSessionBridge, {
-          extractAgentMessageText,
-          isFinalAnswerLikeAgentMessage,
-        });
-        break;
-    }
+    const adapter = providerAdapters.get(normalizeProvider(provider));
+    adapter.runtime.parseEvent(event, state, ensureSessionBridge);
   };
 }
 

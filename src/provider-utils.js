@@ -2,7 +2,10 @@ import {
   normalizeProvider as normalizeCliProvider,
   getProviderDisplayName,
   getProviderShortName,
+  providerSupportsRawConfigOverrides,
   providerSupportsConfigOverrides,
+  getProviderCompactCapabilities,
+  providerSupportsCompactStrategy,
   providerSupportsNativeCompact,
 } from './provider-metadata.js';
 
@@ -10,7 +13,10 @@ export {
   normalizeCliProvider,
   getProviderDisplayName,
   getProviderShortName,
+  providerSupportsRawConfigOverrides,
   providerSupportsConfigOverrides,
+  getProviderCompactCapabilities,
+  providerSupportsCompactStrategy,
   providerSupportsNativeCompact,
 };
 
@@ -23,7 +29,7 @@ export function buildRunnerArgs({
   model = null,
   effort = null,
   extraConfigs = [],
-  compactStrategy = 'hard',
+  compactStrategy = 'native',
   compactOnThreshold = true,
   modelAutoCompactTokenLimit = 0,
 } = {}) {
