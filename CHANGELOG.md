@@ -6,11 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-16
+
 ### Added
 - Added `!c` as a short text-command alias for `cancel`.
 
 ### Changed
-- Queue, onboarding, help, and live progress messaging now point users to `!cancel` / `!c` and slash `/cancel` instead of leading with `!abort`.
+- Queue, onboarding, help, and live progress messaging now point users to `!cancel` / `!c` while keeping `/abort`, `!abort`, and `!stop` compatibility.
 - Running progress cards no longer attach an inline Cancel button and instead stay text-only with explicit command hints.
 
 ## [0.6.0] - 2026-03-15

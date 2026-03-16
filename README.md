@@ -87,8 +87,8 @@ Git hooks 说明：
 - `/cx_profile <auto|solo|team|public|status>` - 设置或查看当前频道 security profile 覆盖
 - `/cx_timeout <毫秒|off|status>` - 设置当前频道 runner timeout 覆盖
 - `/cx_progress` - 查看当前运行任务的最新进度快照
-- `/cx_abort` - 中断当前运行并清空队列
-- `/cx_cancel` - 中断当前运行并清空队列
+- `/cx_abort` - 中断当前运行并清空队列（兼容旧 alias）
+- `/cx_cancel` - 中断当前运行并清空队列；文本命令可用 `!cancel` / `!c`，并兼容 `!abort` / `!stop`
 
 常用文本命令别名：
 

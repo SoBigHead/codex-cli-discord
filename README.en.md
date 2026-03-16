@@ -87,8 +87,8 @@ Then in your Discord server, invite the bot, and use these slash commands. Examp
 - `/cx_profile <auto|solo|team|public|status>` — set or view current channel security profile override
 - `/cx_timeout <ms|off|status>` — set current channel runner timeout override
 - `/cx_progress` — show latest progress snapshot for the running task
-- `/cx_abort` — interrupt current run and clear queued prompts
-- `/cx_cancel` — interrupt current run and clear queued prompts
+- `/cx_abort` — interrupt current run and clear queued prompts (legacy alias)
+- `/cx_cancel` — interrupt current run and clear queued prompts; text aliases: `!cancel` / `!c`, with `!abort` / `!stop` kept for compatibility
 
 Common text-command aliases:
 
