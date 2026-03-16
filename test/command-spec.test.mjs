@@ -8,6 +8,7 @@ import {
 } from '../src/command-spec.js';
 
 test('normalizeCommandName maps text and slash aliases to canonical names', () => {
+  assert.equal(normalizeCommandName('!c', { allowBangPrefix: true }), 'cancel');
   assert.equal(normalizeCommandName('!abort', { allowBangPrefix: true }), 'cancel');
   assert.equal(normalizeCommandName('guide'), 'onboarding');
   assert.equal(normalizeCommandName('lang'), 'language');

@@ -350,7 +350,7 @@ export function createReportFormatters({
         runtime.progressMessageId ? `• progress message id: \`${runtime.progressMessageId}\`` : null,
         `• queued prompts: ${runtime.queued}`,
         `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
-        `• hint: Use \`!abort\` / \`${slashRef('cancel')}\` to interrupt current task and clear queue.`,
+        `• hint: Use \`!cancel\` / \`!c\` or \`${slashRef('cancel')}\` to interrupt current task and clear queue.`,
       ].filter(Boolean).join('\n');
     }
     return [
@@ -366,7 +366,7 @@ export function createReportFormatters({
       runtime.progressMessageId ? `• 进度消息 ID: \`${runtime.progressMessageId}\`` : null,
       `• 排队任务: ${runtime.queued}`,
       `• 队列上限: ${formatQueueLimit(security.maxQueuePerChannel)}`,
-      `• 提示: 可用 \`!abort\` / \`${slashRef('cancel')}\` 中断当前任务并清空队列。`,
+      `• 提示: 可用 \`!cancel\` / \`!c\` 或 \`${slashRef('cancel')}\` 中断当前任务并清空队列。`,
     ].filter(Boolean).join('\n');
   }
 
@@ -624,7 +624,7 @@ export function createReportFormatters({
         `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — channel security profile`,
         `• \`${slashRef('timeout')} <ms|off|status>\` / \`!timeout <...>\` — runner timeout`,
         `• \`${slashRef('progress')}\` / \`!progress\` — current run progress`,
-        `• \`${slashRef('cancel')}\` / \`${slashRef('abort')}\` / \`!abort\` / \`!cancel\` / \`!stop\` — stop running task and clear queue`,
+        `• \`${slashRef('cancel')}\` / \`${slashRef('abort')}\` / \`!cancel\` / \`!c\` / \`!abort\` / \`!stop\` — stop running task and clear queue`,
         `• \`${slashRef('new')}\` / \`!new\` — switch to a fresh session but keep channel settings`,
         `• \`${slashRef('reset')}\` / \`!reset\` — clear session context and extra config overrides`,
         '• `!resume <session_id>` — bind existing provider session',
@@ -675,7 +675,7 @@ export function createReportFormatters({
       `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — 当前频道 security profile`,
       `• \`${slashRef('timeout')} <毫秒|off|status>\` / \`!timeout <...>\` — runner 超时`,
       `• \`${slashRef('progress')}\` / \`!progress\` — 查看当前任务的最新进度`,
-      `• \`${slashRef('cancel')}\` / \`${slashRef('abort')}\` / \`!abort\` / \`!cancel\` / \`!stop\` — 中断当前任务并清空队列`,
+      `• \`${slashRef('cancel')}\` / \`${slashRef('abort')}\` / \`!cancel\` / \`!c\` / \`!abort\` / \`!stop\` — 中断当前任务并清空队列`,
       `• \`${slashRef('new')}\` / \`!new\` — 切到新会话，但保留当前频道配置`,
       `• \`${slashRef('reset')}\` / \`!reset\` — 清空会话与额外配置，下条消息新开上下文`,
       '• `!resume <session_id>` — 继承一个已有的 provider session',

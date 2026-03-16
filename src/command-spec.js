@@ -41,6 +41,7 @@ const ALL_SESSION_COMMAND_ALIASES = Object.freeze({
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
 
 const COMMAND_ALIASES = Object.freeze({
+  c: 'cancel',
   abort: 'cancel',
   stop: 'cancel',
   fresh: 'new',

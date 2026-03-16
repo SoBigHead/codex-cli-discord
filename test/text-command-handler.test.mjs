@@ -145,3 +145,26 @@ test('createTextCommandHandler shows current provider-native resume alias', asyn
   assert.match(replies[0], /!chat_sessions/);
   assert.doesNotMatch(replies[0], /!project_resume/);
 });
+
+test('createTextCommandHandler accepts !c as cancel alias', async () => {
+  const replies = [];
+  const cancelCalls = [];
+  const session = { provider: 'codex', language: 'zh' };
+
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    cancelChannelWork: (key, reason) => {
+      cancelCalls.push({ key, reason });
+      return { cancelledRunning: true, clearedQueued: 2 };
+    },
+    formatCancelReport: (outcome) => JSON.stringify(outcome),
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+
+  await handleCommand(createMessage(), 'thread-1', '!c');
+
+  assert.deepEqual(cancelCalls, [{ key: 'thread-1', reason: 'text_command:!c' }]);
+  assert.deepEqual(replies, [JSON.stringify({ cancelledRunning: true, clearedQueued: 2 })]);
+});
