@@ -29,7 +29,7 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, an
   - reacts `⚡` when starting, `✅` on success, `❌` on failure, `🛑` when cancelled
   - `/name` to label a session
   - per-channel prompt queue (messages are queued instead of rejected)
-  - `/cancel` / `!abort` to interrupt the current run and clear queued prompts
+  - `/cancel` / `/abort` / `!cancel` / `!c` / `!abort` to interrupt the current run and clear queued prompts
   - long-run live progress updates (phase/elapsed/latest step), plus `/progress` / `!progress`
   - `/doctor` / `!doctor` for runtime + security diagnostics
   - `/onboarding` interactive onboarding wizard (buttons + direct config), `!onboarding` text fallback
@@ -89,6 +89,10 @@ Then in your Discord server, invite the bot, and use these slash commands. Examp
 - `/cx_progress` — show latest progress snapshot for the running task
 - `/cx_abort` — interrupt current run and clear queued prompts
 - `/cx_cancel` — interrupt current run and clear queued prompts
+
+Common text-command aliases:
+
+- `!cancel`, `!c`, `!abort`, and `!stop` all interrupt the current run and clear queued prompts
 
 Provider-native session aliases:
 

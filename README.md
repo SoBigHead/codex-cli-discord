@@ -29,7 +29,7 @@
   - 开始时反应 `⚡`，成功 `✅`，失败 `❌`，取消 `🛑`
   - 用 `/name` 给会话命名
   - 按频道排队（新消息进入队列，不会被直接拒绝）
-  - `/cancel` / `!abort` 可中断当前运行并清空队列
+  - `/cancel` / `/abort` / `!cancel` / `!c` / `!abort` 可中断当前运行并清空队列
   - 长任务实时进度（阶段/耗时/最新步骤），并支持 `/progress` / `!progress`
   - `/doctor` / `!doctor` 可做运行与安全配置体检
   - `/onboarding` 可用按钮分步引导并可直接配置关键项，`!onboarding` 提供文本版兜底
@@ -89,6 +89,10 @@ Git hooks 说明：
 - `/cx_progress` - 查看当前运行任务的最新进度快照
 - `/cx_abort` - 中断当前运行并清空队列
 - `/cx_cancel` - 中断当前运行并清空队列
+
+常用文本命令别名：
+
+- `!cancel` / `!c` / `!abort` / `!stop` - 中断当前运行并清空队列
 
 provider 原生命名 alias：
 
