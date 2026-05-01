@@ -3,6 +3,7 @@ node_modules/
 .env.local
 .env.save
 logs/
+test-results/
 workspaces/
 worktrees/
 data/

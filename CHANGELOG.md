@@ -6,6 +6,24 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-05-01
+
+### Added
+- Added native Codex goal controls through `/goal` and `!goal`, backed by Codex app-server `thread/goal/*` APIs with support for status, set, pause, resume, complete, clear, and token budget updates.
+- Added Codex app-server client helpers for native thread fork and persisted goal operations.
+- Added native Codex image attachment support so Discord image inputs are passed to `codex exec` as CLI image arguments.
+- Added compact model/settings controls, including CLI-backed Codex and Claude model catalogs, effort controls, compact threshold editing, and reply delivery settings.
+- Added Codex account identity and live rate-limit details to status output.
+- Added external signal material pool planning documents under `test-results/`.
+
+### Changed
+- Simplified the README and expanded the Codex surface roadmap around native command surfaces.
+- Improved Codex permission/profile handling, compact reporting, runtime labels, and provider-scoped configuration surfaces.
+
+### Fixed
+- Surfaced Claude API retry errors in Discord instead of hiding them behind generic result handling.
+- Covered Codex fork, goal, native image, model panel, compact, provider runtime, and settings flows with regression tests.
+
 ## [0.11.4] - 2026-04-16
 
 ### Added
