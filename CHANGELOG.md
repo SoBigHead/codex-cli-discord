@@ -6,6 +6,13 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.2] - 2026-05-01
+
+### Fixed
+- Aligned Discord Codex goal behavior with official Codex CLI semantics: active goals now enqueue continuation work instead of only saving state.
+- Enabled the Codex `goals` feature for normal Codex runner invocations so resumed runs can use native goal runtime behavior.
+- Updated goal status text to explain active, paused, budget-limited, and complete states without implying that active is inert.
+
 ## [0.12.1] - 2026-05-01
 
 ### Changed

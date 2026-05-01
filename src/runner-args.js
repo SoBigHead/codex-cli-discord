@@ -66,7 +66,7 @@ export function createRunnerArgsBuilder({
       || fastMode.source === 'parent channel'
       || fastMode.enabled === false;
 
-    const common = [];
+    const common = ['--enable', 'goals'];
     if (codexProfile?.isExplicit) {
       if (!codexProfile.valid) {
         throw new Error(`invalid Codex profile: ${codexProfile.value} (${codexProfile.error || 'unknown error'})`);

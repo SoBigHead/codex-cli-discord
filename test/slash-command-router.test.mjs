@@ -363,6 +363,7 @@ test('createSlashCommandRouter rejects fork for non-codex providers', async () =
 
 test('createSlashCommandRouter sets a Codex goal through app-server', async () => {
   const goalCalls = [];
+  const queuedPrompts = [];
   const state = createRouterState({
     getSessionId: () => 'thread-1',
     async setCodexThreadGoal(options) {
@@ -379,6 +380,10 @@ test('createSlashCommandRouter sets a Codex goal through app-server', async () =
           updatedAt: 1,
         },
       };
+    },
+    async enqueuePrompt(_message, key, content) {
+      queuedPrompts.push({ key, content });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
     },
   });
 
@@ -403,7 +408,10 @@ test('createSlashCommandRouter sets a Codex goal through app-server', async () =
   }]);
   assert.match(state.replies[0].content, /goal 已设置/);
   assert.match(state.replies[0].content, /ship Discord goal command/);
-  assert.match(state.replies[0].content, /设置 goal 不会自动开跑/);
+  assert.match(state.replies[0].content, /已触发自动续跑/);
+  assert.equal(queuedPrompts.length, 1);
+  assert.equal(queuedPrompts[0].key, 'channel-1');
+  assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
 });
 
 test('createSlashCommandRouter rejects Codex goal without a bound session', async () => {

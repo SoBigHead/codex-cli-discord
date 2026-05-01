@@ -354,7 +354,7 @@ test('createReportFormatters.formatStatusReportWithLiveData shows Codex goal sta
   }, { id: 'channel-1' });
 
   assert.match(report, /Codex goal: 进行中；目标：ship Discord goal command；预算：1200\/90000/);
-  assert.match(report, /设置 goal 不会自动开跑/);
+  assert.match(report, /active goal 会在 runner 空闲时续跑/);
 });
 
 test('createReportFormatters.formatStatusReportWithLiveData surfaces Codex goal query failures', async () => {

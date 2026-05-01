@@ -268,6 +268,7 @@ test('createTextCommandHandler rejects fork for non-codex providers', async () =
 test('createTextCommandHandler sets Codex goal from free text', async () => {
   const replies = [];
   const calls = [];
+  const queuedPrompts = [];
   const session = { provider: 'codex', language: 'zh', runnerSessionId: 'thread-1' };
   const handleCommand = createTextCommandHandler({
     getSession: () => session,
@@ -289,6 +290,10 @@ test('createTextCommandHandler sets Codex goal from free text', async () => {
         },
       };
     },
+    async enqueuePrompt(_message, key, content) {
+      queuedPrompts.push({ key, content });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
+    },
     safeReply: async (_message, payload) => {
       replies.push(payload);
     },
@@ -303,7 +308,10 @@ test('createTextCommandHandler sets Codex goal from free text', async () => {
   }]);
   assert.match(replies[0], /goal 已设置/);
   assert.match(replies[0], /ship Discord goal command/);
-  assert.match(replies[0], /设置 goal 不会自动开跑/);
+  assert.match(replies[0], /已触发自动续跑/);
+  assert.equal(queuedPrompts.length, 1);
+  assert.equal(queuedPrompts[0].key, 'thread-1');
+  assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
 });
 
 test('createTextCommandHandler clears Codex goal', async () => {

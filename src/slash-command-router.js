@@ -9,9 +9,11 @@ import {
   normalizeForkSessionId,
 } from './codex-fork-flow.js';
 import {
+  CODEX_GOAL_CONTINUATION_PROMPT,
   executeCodexGoalAction,
   formatCodexGoalResult,
   parseCodexGoalSlashInput,
+  shouldStartCodexGoalContinuation,
 } from './codex-goal-flow.js';
 
 const ACTION_BUTTON_PREFIX = 'cmd';
@@ -31,6 +33,27 @@ function registerSlashHandlers(map, names, handler) {
     if (!key) continue;
     map.set(key, handler);
   }
+}
+
+function createInteractionPromptMessage(interaction) {
+  return {
+    id: interaction.id,
+    channel: interaction.channel,
+    channelId: interaction.channelId || interaction.channel?.id,
+    author: interaction.user,
+    client: interaction.client || interaction.channel?.client,
+    reactions: { cache: new Map() },
+    react: async () => {},
+    reply: async (payload) => {
+      if (typeof interaction.followUp === 'function') {
+        return interaction.followUp(payload);
+      }
+      if (typeof interaction.channel?.send === 'function') {
+        return interaction.channel.send(payload);
+      }
+      throw new Error('Cannot send goal continuation reply');
+    },
+  };
 }
 
 export function buildCommandActionButtonId(command, userId) {
@@ -126,6 +149,48 @@ export function createSlashCommandRouter({
   safeError,
 } = {}) {
   const handlers = new Map();
+
+  async function maybeEnqueueCodexGoalContinuation({ action, result, interaction, key, session }) {
+    if (!shouldStartCodexGoalContinuation(action, result)) return result;
+    if (typeof enqueuePrompt !== 'function') {
+      return { ...result, continuation: { state: 'failed', reason: 'enqueue unavailable' } };
+    }
+    try {
+      const security = typeof resolveSecurityContext === 'function'
+        ? resolveSecurityContext(interaction.channel, session)
+        : null;
+      const queued = await enqueuePrompt(
+        createInteractionPromptMessage(interaction),
+        key,
+        CODEX_GOAL_CONTINUATION_PROMPT,
+        security,
+      );
+      if (queued?.enqueued) {
+        return {
+          ...result,
+          continuation: {
+            state: 'enqueued',
+            queuedAhead: queued.queuedAhead || 0,
+          },
+        };
+      }
+      return {
+        ...result,
+        continuation: {
+          state: 'failed',
+          reason: queued?.reason || 'enqueue failed',
+        },
+      };
+    } catch (err) {
+      return {
+        ...result,
+        continuation: {
+          state: 'failed',
+          reason: safeError(err),
+        },
+      };
+    }
+  }
 
   const closeRuntimeForKey = (key, reason = 'runtime config changed') => {
     try {
@@ -538,7 +603,7 @@ export function createSlashCommandRouter({
     }
   });
 
-  registerSlashHandlers(handlers, ['goal'], async ({ interaction, session, respond }) => {
+  registerSlashHandlers(handlers, ['goal'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
     const provider = getSessionProvider(session);
     const action = parseCodexGoalSlashInput({
@@ -556,8 +621,15 @@ export function createSlashCommandRouter({
         setCodexThreadGoal,
         clearCodexThreadGoal,
       });
+      const withContinuation = await maybeEnqueueCodexGoalContinuation({
+        action,
+        result,
+        interaction,
+        key,
+        session,
+      });
       await respond({
-        content: formatCodexGoalResult(result, language),
+        content: formatCodexGoalResult(withContinuation, language),
         flags: 64,
       });
     } catch (err) {

@@ -10,9 +10,11 @@ import {
   parseForkTextInput,
 } from './codex-fork-flow.js';
 import {
+  CODEX_GOAL_CONTINUATION_PROMPT,
   executeCodexGoalAction,
   formatCodexGoalResult,
   parseCodexGoalTextInput,
+  shouldStartCodexGoalContinuation,
 } from './codex-goal-flow.js';
 
 function isExistingDirectory(dir) {
@@ -107,6 +109,43 @@ export function createTextCommandHandler({
   resolvePath,
   safeError,
 } = {}) {
+  async function maybeEnqueueCodexGoalContinuation({ action, result, message, key, session }) {
+    if (!shouldStartCodexGoalContinuation(action, result)) return result;
+    if (typeof enqueuePrompt !== 'function') {
+      return { ...result, continuation: { state: 'failed', reason: 'enqueue unavailable' } };
+    }
+    try {
+      const security = typeof resolveSecurityContext === 'function'
+        ? resolveSecurityContext(message.channel, session)
+        : null;
+      const queued = await enqueuePrompt(message, key, CODEX_GOAL_CONTINUATION_PROMPT, security);
+      if (queued?.enqueued) {
+        return {
+          ...result,
+          continuation: {
+            state: 'enqueued',
+            queuedAhead: queued.queuedAhead || 0,
+          },
+        };
+      }
+      return {
+        ...result,
+        continuation: {
+          state: 'failed',
+          reason: queued?.reason || 'enqueue failed',
+        },
+      };
+    } catch (err) {
+      return {
+        ...result,
+        continuation: {
+          state: 'failed',
+          reason: safeError(err),
+        },
+      };
+    }
+  }
+
   const closeRuntimeForKey = (key, reason = 'runtime config changed') => {
     try {
       closeRuntimeSession(key, reason);
@@ -448,7 +487,14 @@ export function createTextCommandHandler({
             setCodexThreadGoal,
             clearCodexThreadGoal,
           });
-          await safeReply(message, formatCodexGoalResult(result, language));
+          const withContinuation = await maybeEnqueueCodexGoalContinuation({
+            action,
+            result,
+            message,
+            key,
+            session,
+          });
+          await safeReply(message, formatCodexGoalResult(withContinuation, language));
         } catch (err) {
           await safeReply(message, `❌ Codex goal 失败：${safeError(err)}`);
         }

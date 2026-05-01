@@ -330,12 +330,12 @@ export function createReportFormatters({
     if (language === 'en') {
       return [
         `• Codex goal: ${formatCodexGoalStatus(goal.status, language)}; objective: ${objective}; budget: ${formatCodexGoalBudget(goal, language)}`,
-        '• Codex goal run state: setting a goal does not start a task; send a normal prompt to run against it',
+        '• Codex goal run state: active goals continue when the runner is idle; use progress or queue to see actual execution',
       ];
     }
     return [
       `• Codex goal: ${formatCodexGoalStatus(goal.status, language)}；目标：${objective}；预算：${formatCodexGoalBudget(goal, language)}`,
-      '• Codex goal 运行状态: 设置 goal 不会自动开跑；发送普通任务后才会按这个 goal 工作',
+      '• Codex goal 运行状态: active goal 会在 runner 空闲时续跑；看实际执行用 progress 或 queue',
     ];
   }
 
@@ -1051,7 +1051,7 @@ export function createReportFormatters({
         '• `!sessions` — list recent provider sessions from the native runtime store',
         sessionsAlias ? `• current provider alias: \`!${sessionsAlias}\`` : null,
         provider === 'codex' ? `• \`${slashRef('fork')} [session_id] [prompt]\` / \`!fork [session_id] [prompt]\` — create a native Codex fork in a new Discord thread` : null,
-        provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; setting it does not start a task` : null,
+        provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; active goals continue when the runner is idle` : null,
         !botProvider ? '• `!provider <codex|claude|gemini|status>` — switch provider for current channel' : null,
         '',
         '**Workspace**',
@@ -1108,7 +1108,7 @@ export function createReportFormatters({
       '• `!sessions` — 从 provider 原生运行时存储里列出最近的 sessions',
       sessionsAlias ? `• 当前 provider 别名：\`!${sessionsAlias}\`` : null,
       provider === 'codex' ? `• \`${slashRef('fork')} [session_id] [prompt]\` / \`!fork [session_id] [prompt]\` — 用 Codex 原生 fork 创建新 Discord thread` : null,
-      provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；设置后不会自动开跑` : null,
+      provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；active 时会在空闲后续跑` : null,
       !botProvider ? '• `!provider <codex|claude|gemini|status>` — 切换当前频道 provider' : null,
       '',
       '**工作目录**',

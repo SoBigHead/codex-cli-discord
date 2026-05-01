@@ -84,7 +84,7 @@ npm start
 
 文本命令主要作为兜底。常用的是 `!cancel`、`!c`、`!progress`、`!status`、`!resume`、`!sessions`、`!goal status`。
 
-`/cx_goal action:set` 或 `!goal <目标>` 只会保存当前 Codex session 的目标，不会自动启动任务。设置后再发一条普通消息，Codex 才会按这个 goal 继续工作。`/cx_status` 和 `!status` 会显示当前 goal；只查 goal 可以用 `/cx_goal action:status` 或 `!goal status`。
+`/cx_goal action:set` 或 `!goal <目标>` 会把当前 Codex session 的目标设为 active，并在 runner 空闲时继续执行。`/cx_status` 和 `!status` 会显示当前 goal；只查 goal 可以用 `/cx_goal action:status` 或 `!goal status`。`pause` 会停止续跑，`resume` 会恢复续跑，`clear` 会清除 goal。
 
 ## 设置面板
 

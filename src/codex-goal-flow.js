@@ -1,4 +1,9 @@
 const GOAL_STATUSES = new Set(['active', 'paused', 'budgetLimited', 'complete']);
+export const CODEX_GOAL_CONTINUATION_PROMPT = [
+  'Continue working toward the active Codex goal for this thread.',
+  'Use the persisted goal state as the source of truth.',
+  'If the goal is already complete, mark it complete and summarize the result.',
+].join(' ');
 
 function normalizeText(value) {
   const text = String(value || '').trim();
@@ -148,6 +153,14 @@ export async function executeCodexGoalAction({
   return { ok: false, reason: 'invalid', message: `unsupported goal action: ${action.type}` };
 }
 
+export function shouldStartCodexGoalContinuation(action, result) {
+  if (!result?.ok || !result.goal) return false;
+  if (result.goal.status !== 'active') return false;
+  if (action?.type === 'set') return true;
+  if (action?.type === 'set_status' && action.status === 'active') return true;
+  return false;
+}
+
 export function formatCodexGoalStatus(status, language = 'zh') {
   const normalized = String(status || '').trim();
   if (language === 'en') return normalized || 'unknown';
@@ -182,10 +195,47 @@ export function formatCodexGoalSummary(goal, language = 'zh') {
   ].join('\n');
 }
 
-function formatGoalRunHint(language) {
+function formatGoalRunHint(goal, language, continuation = null) {
+  const status = String(goal?.status || '').trim();
+  if (status === 'active') {
+    if (continuation?.state === 'enqueued') {
+      const queuedAhead = Number(continuation.queuedAhead) || 0;
+      if (language === 'en') {
+        return queuedAhead > 0
+          ? `Run state: active; continuation queued after ${queuedAhead} task(s).`
+          : 'Run state: active; continuation started.';
+      }
+      return queuedAhead > 0
+        ? `运行状态：active，已排到 ${queuedAhead} 个任务之后自动续跑。`
+        : '运行状态：active，已触发自动续跑。';
+    }
+    if (continuation?.state === 'failed') {
+      return language === 'en'
+        ? `Run state: active, but continuation was not queued (${continuation.reason || 'enqueue failed'}).`
+        : `运行状态：active，但自动续跑没有排进去（${continuation.reason || '入队失败'}）。`;
+    }
+    return language === 'en'
+      ? 'Run state: active means Codex should continue when the runner is idle. Use progress or queue to see actual execution.'
+      : '运行状态：active 表示 Codex 会在 runner 空闲时续跑。看实际执行用 progress 或 queue。';
+  }
+  if (status === 'paused') {
+    return language === 'en'
+      ? 'Run state: paused; resume it to continue.'
+      : '运行状态：paused，不会续跑；resume 后继续。';
+  }
+  if (status === 'budgetLimited') {
+    return language === 'en'
+      ? 'Run state: limited by budget; raise or clear the budget before continuing.'
+      : '运行状态：预算受限；需要提高或清除预算后再继续。';
+  }
+  if (status === 'complete') {
+    return language === 'en'
+      ? 'Run state: complete; Codex will not continue this goal.'
+      : '运行状态：已完成，不会再续跑。';
+  }
   return language === 'en'
-    ? 'Run state: setting a goal does not start a task. Send a normal prompt to run against it.'
-    : '运行状态：设置 goal 不会自动开跑。再发送一条普通任务，才会按这个 goal 继续工作。';
+    ? 'Run state: unknown.'
+    : '运行状态：未知。';
 }
 
 export function formatCodexGoalResult(result, language = 'zh') {
@@ -212,15 +262,15 @@ export function formatCodexGoalResult(result, language = 'zh') {
   }
   if (result.kind === 'status') {
     return language === 'en'
-      ? `🎯 current goal\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`
-      : `🎯 当前 goal\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`;
+      ? `🎯 current goal\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(result.goal, language, result.continuation)}`
+      : `🎯 当前 goal\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(result.goal, language, result.continuation)}`;
   }
   if (result.kind === 'set') {
     return language === 'en'
-      ? `✅ goal set\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`
-      : `✅ goal 已设置\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`;
+      ? `✅ goal set\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(result.goal, language, result.continuation)}`
+      : `✅ goal 已设置\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(result.goal, language, result.continuation)}`;
   }
   return language === 'en'
-    ? `✅ goal updated\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`
-    : `✅ goal 已更新\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`;
+    ? `✅ goal updated\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(result.goal, language, result.continuation)}`
+    : `✅ goal 已更新\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(result.goal, language, result.continuation)}`;
 }
