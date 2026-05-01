@@ -209,6 +209,7 @@ export function createAppContext({
       ...reportOptions,
       getSessionLanguage: sessionSettings.getSessionLanguage,
       getSessionProvider: identity.getSessionProvider,
+      getSessionId: identity.getSessionId,
       getRuntimeSnapshot: promptRuntime.getRuntimeSnapshot,
       resolveSecurityContext: securityPolicy.resolveSecurityContext,
       resolveModelSetting: sessionSettings.resolveModelSetting,

@@ -148,7 +148,7 @@ export async function executeCodexGoalAction({
   return { ok: false, reason: 'invalid', message: `unsupported goal action: ${action.type}` };
 }
 
-function formatGoalStatus(status, language) {
+export function formatCodexGoalStatus(status, language = 'zh') {
   const normalized = String(status || '').trim();
   if (language === 'en') return normalized || 'unknown';
   if (normalized === 'active') return '进行中';
@@ -158,7 +158,7 @@ function formatGoalStatus(status, language) {
   return normalized || '未知';
 }
 
-function formatGoalBudget(goal, language) {
+export function formatCodexGoalBudget(goal, language = 'zh') {
   const budget = goal?.tokenBudget;
   const used = goal?.tokensUsed;
   if (!Number.isFinite(budget)) return language === 'en' ? 'none' : '未设置';
@@ -166,20 +166,26 @@ function formatGoalBudget(goal, language) {
   return String(budget);
 }
 
-function formatGoalSummary(goal, language) {
+export function formatCodexGoalSummary(goal, language = 'zh') {
   if (!goal) return '';
   if (language === 'en') {
     return [
       `objective: ${goal.objective}`,
-      `status: ${formatGoalStatus(goal.status, language)}`,
-      `budget: ${formatGoalBudget(goal, language)}`,
+      `status: ${formatCodexGoalStatus(goal.status, language)}`,
+      `budget: ${formatCodexGoalBudget(goal, language)}`,
     ].join('\n');
   }
   return [
     `目标：${goal.objective}`,
-    `状态：${formatGoalStatus(goal.status, language)}`,
-    `预算：${formatGoalBudget(goal, language)}`,
+    `状态：${formatCodexGoalStatus(goal.status, language)}`,
+    `预算：${formatCodexGoalBudget(goal, language)}`,
   ].join('\n');
+}
+
+function formatGoalRunHint(language) {
+  return language === 'en'
+    ? 'Run state: setting a goal does not start a task. Send a normal prompt to run against it.'
+    : '运行状态：设置 goal 不会自动开跑。再发送一条普通任务，才会按这个 goal 继续工作。';
 }
 
 export function formatCodexGoalResult(result, language = 'zh') {
@@ -206,15 +212,15 @@ export function formatCodexGoalResult(result, language = 'zh') {
   }
   if (result.kind === 'status') {
     return language === 'en'
-      ? `🎯 current goal\n${formatGoalSummary(result.goal, language)}`
-      : `🎯 当前 goal\n${formatGoalSummary(result.goal, language)}`;
+      ? `🎯 current goal\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`
+      : `🎯 当前 goal\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`;
   }
   if (result.kind === 'set') {
     return language === 'en'
-      ? `✅ goal set\n${formatGoalSummary(result.goal, language)}`
-      : `✅ goal 已设置\n${formatGoalSummary(result.goal, language)}`;
+      ? `✅ goal set\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`
+      : `✅ goal 已设置\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`;
   }
   return language === 'en'
-    ? `✅ goal updated\n${formatGoalSummary(result.goal, language)}`
-    : `✅ goal 已更新\n${formatGoalSummary(result.goal, language)}`;
+    ? `✅ goal updated\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`
+    : `✅ goal 已更新\n${formatCodexGoalSummary(result.goal, language)}\n${formatGoalRunHint(language)}`;
 }

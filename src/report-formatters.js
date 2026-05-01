@@ -1,6 +1,7 @@
 import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './workspace-busy-report.js';
 import { getProviderCommandAlias } from './command-spec.js';
 import { formatCodexProfileLabel, formatReplyDeliveryModeLabel } from './session-settings.js';
+import { formatCodexGoalBudget, formatCodexGoalStatus } from './codex-goal-flow.js';
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
 
@@ -48,6 +49,8 @@ export function createReportFormatters({
   resolveCompactThresholdSetting = () => ({ tokens: 0, source: 'env default' }),
   resolveNativeCompactTokenLimitSetting = () => ({ tokens: 0, source: 'env default' }),
   getProviderRateLimits = async () => null,
+  getSessionId = (session) => session?.runnerSessionId || session?.codexThreadId || null,
+  getCodexThreadGoal = async () => null,
   getWorkspaceBinding = () => ({
     workspaceDir: null,
     source: 'unset',
@@ -298,6 +301,44 @@ export function createReportFormatters({
     ].filter(Boolean);
   }
 
+  function formatCodexGoalLines(provider, goalReport, language = 'en') {
+    if (provider !== 'codex' || !goalReport) return [];
+    if (goalReport.ok === false) {
+      if (goalReport.reason === 'missing_session') {
+        return [
+          language === 'en'
+            ? '• Codex goal: unavailable (no bound Codex session; run or resume a session first)'
+            : '• Codex goal: 暂不可查（当前频道还没有绑定 Codex session，先跑一轮或 resume 一个 session）',
+        ];
+      }
+      const error = String(goalReport.error || 'unknown error').replace(/\s+/g, ' ').trim();
+      return [
+        language === 'en'
+          ? `• Codex goal: unavailable (${error || 'unknown error'})`
+          : `• Codex goal: 暂不可查（${error || '未知错误'}）`,
+      ];
+    }
+    const goal = goalReport.goal;
+    if (!goal) {
+      return [
+        language === 'en'
+          ? '• Codex goal: not set'
+          : '• Codex goal: 未设置',
+      ];
+    }
+    const objective = String(goal.objective || '').replace(/\s+/g, ' ').trim() || (language === 'en' ? '(empty objective)' : '（空目标）');
+    if (language === 'en') {
+      return [
+        `• Codex goal: ${formatCodexGoalStatus(goal.status, language)}; objective: ${objective}; budget: ${formatCodexGoalBudget(goal, language)}`,
+        '• Codex goal run state: setting a goal does not start a task; send a normal prompt to run against it',
+      ];
+    }
+    return [
+      `• Codex goal: ${formatCodexGoalStatus(goal.status, language)}；目标：${objective}；预算：${formatCodexGoalBudget(goal, language)}`,
+      '• Codex goal 运行状态: 设置 goal 不会自动开跑；发送普通任务后才会按这个 goal 工作',
+    ];
+  }
+
   function formatWorkspaceSourceLabel(source, language = 'zh') {
     const value = String(source || '').trim().toLowerCase();
     if (language === 'en') {
@@ -435,7 +476,7 @@ export function createReportFormatters({
     return `• fork 来源: ${getProviderDisplayName(provider)} \`${parentSessionId}\`${channelPart}`;
   }
 
-  function formatStatusReport(key, session, channel = null, { rateLimitReport = null } = {}) {
+  function formatStatusReport(key, session, channel = null, { rateLimitReport = null, goalReport = null } = {}) {
     const language = getSessionLanguage(session);
     const lang = normalizeUiLanguage(language);
     const provider = getSessionProvider(session);
@@ -462,6 +503,7 @@ export function createReportFormatters({
     const sessionFieldLabel = formatProviderSessionTerm(provider, lang);
     const nativeCompact = formatNativeCompactSetting(provider, nativeLimit, lang);
     const rateLimitLines = formatCodexRateLimitLines(provider, rateLimitReport, lang);
+    const goalLines = formatCodexGoalLines(provider, goalReport, lang);
 
     if (lang === 'en') {
       return [
@@ -484,6 +526,7 @@ export function createReportFormatters({
         `• permissions: ${formatPermissionsLabel(session, lang)}`,
         `• cli: ${formatCliHealth(cliHealth, lang)}`,
         ...rateLimitLines,
+        ...goalLines,
         `• ${sessionFieldLabel}: ${formatSessionStatusLabel(session)}`,
         formatForkParentLine(session, lang),
         `• last run input tokens: ${formatTokenValue(session?.lastInputTokens)}`,
@@ -511,6 +554,7 @@ export function createReportFormatters({
       `• 权限: ${formatPermissionsLabel(session, lang)}`,
       `• CLI: ${formatCliHealth(cliHealth, lang)}`,
       ...rateLimitLines,
+      ...goalLines,
       `• ${sessionFieldLabel}: ${formatSessionStatusLabel(session)}`,
       formatForkParentLine(session, lang),
       `• 上一轮输入 tokens: ${formatTokenValue(session?.lastInputTokens)}`,
@@ -521,17 +565,33 @@ export function createReportFormatters({
   async function formatStatusReportWithLiveData(key, session, channel = null) {
     const provider = getSessionProvider(session);
     let rateLimitReport = null;
+    let goalReport = null;
     if (provider === 'codex') {
-      try {
-        rateLimitReport = await getProviderRateLimits(provider);
-      } catch (err) {
+      const threadId = String(getSessionId(session) || '').trim();
+      const [rateLimitResult, goalResult] = await Promise.allSettled([
+        getProviderRateLimits(provider),
+        threadId ? getCodexThreadGoal({ threadId }) : Promise.resolve({ missingSession: true }),
+      ]);
+      if (rateLimitResult.status === 'fulfilled') {
+        rateLimitReport = rateLimitResult.value;
+      } else {
         rateLimitReport = {
           ok: false,
-          error: String(err?.message || err || 'unknown error'),
+          error: String(rateLimitResult.reason?.message || rateLimitResult.reason || 'unknown error'),
+        };
+      }
+      if (!threadId) {
+        goalReport = { ok: false, reason: 'missing_session' };
+      } else if (goalResult.status === 'fulfilled') {
+        goalReport = { ok: true, goal: goalResult.value?.goal || null };
+      } else {
+        goalReport = {
+          ok: false,
+          error: String(goalResult.reason?.message || goalResult.reason || 'unknown error'),
         };
       }
     }
-    return formatStatusReport(key, session, channel, { rateLimitReport });
+    return formatStatusReport(key, session, channel, { rateLimitReport, goalReport });
   }
 
   function formatQueueReport(key, session = null, channel = null) {
@@ -991,7 +1051,7 @@ export function createReportFormatters({
         '• `!sessions` — list recent provider sessions from the native runtime store',
         sessionsAlias ? `• current provider alias: \`!${sessionsAlias}\`` : null,
         provider === 'codex' ? `• \`${slashRef('fork')} [session_id] [prompt]\` / \`!fork [session_id] [prompt]\` — create a native Codex fork in a new Discord thread` : null,
-        provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal` : null,
+        provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; setting it does not start a task` : null,
         !botProvider ? '• `!provider <codex|claude|gemini|status>` — switch provider for current channel' : null,
         '',
         '**Workspace**',
@@ -1048,7 +1108,7 @@ export function createReportFormatters({
       '• `!sessions` — 从 provider 原生运行时存储里列出最近的 sessions',
       sessionsAlias ? `• 当前 provider 别名：\`!${sessionsAlias}\`` : null,
       provider === 'codex' ? `• \`${slashRef('fork')} [session_id] [prompt]\` / \`!fork [session_id] [prompt]\` — 用 Codex 原生 fork 创建新 Discord thread` : null,
-      provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal` : null,
+      provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；设置后不会自动开跑` : null,
       !botProvider ? '• `!provider <codex|claude|gemini|status>` — 切换当前频道 provider' : null,
       '',
       '**工作目录**',

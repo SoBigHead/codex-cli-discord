@@ -79,9 +79,12 @@ npm start
 /cx_sessions       查看最近会话
 /cx_setdir         设置当前频道 workspace
 /cx_compact        配置 compact 策略和阈值
+/cx_goal          查看或设置当前 Codex session 的持久目标
 ```
 
-文本命令主要作为兜底。常用的是 `!cancel`、`!c`、`!progress`、`!status`、`!resume`、`!sessions`。
+文本命令主要作为兜底。常用的是 `!cancel`、`!c`、`!progress`、`!status`、`!resume`、`!sessions`、`!goal status`。
+
+`/cx_goal action:set` 或 `!goal <目标>` 只会保存当前 Codex session 的目标，不会自动启动任务。设置后再发一条普通消息，Codex 才会按这个 goal 继续工作。`/cx_status` 和 `!status` 会显示当前 goal；只查 goal 可以用 `/cx_goal action:status` 或 `!goal status`。
 
 ## 设置面板
 

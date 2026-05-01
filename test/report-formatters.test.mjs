@@ -332,6 +332,49 @@ test('createReportFormatters.formatStatusReportWithLiveData labels stale Codex q
   assert.match(report, /Codex weekly quota: 45% remaining \(used 55%, resets \d{4}-\d{2}-\d{2} \d{2}:\d{2}\)/);
 });
 
+test('createReportFormatters.formatStatusReportWithLiveData shows Codex goal state', async () => {
+  const formatters = createFormatters({
+    getSessionId: () => 'thread-1',
+    getProviderRateLimits: async () => null,
+    getCodexThreadGoal: async ({ threadId }) => ({
+      goal: {
+        threadId,
+        objective: 'ship Discord goal command',
+        status: 'active',
+        tokenBudget: 90000,
+        tokensUsed: 1200,
+      },
+    }),
+  });
+
+  const report = await formatters.formatStatusReportWithLiveData('thread-1', {
+    provider: 'codex',
+    language: 'zh',
+    mode: 'safe',
+  }, { id: 'channel-1' });
+
+  assert.match(report, /Codex goal: 进行中；目标：ship Discord goal command；预算：1200\/90000/);
+  assert.match(report, /设置 goal 不会自动开跑/);
+});
+
+test('createReportFormatters.formatStatusReportWithLiveData surfaces Codex goal query failures', async () => {
+  const formatters = createFormatters({
+    getSessionId: () => 'thread-1',
+    getProviderRateLimits: async () => null,
+    getCodexThreadGoal: async () => {
+      throw new Error('thread not found');
+    },
+  });
+
+  const report = await formatters.formatStatusReportWithLiveData('thread-1', {
+    provider: 'codex',
+    language: 'en',
+    mode: 'safe',
+  }, { id: 'channel-1' });
+
+  assert.match(report, /Codex goal: unavailable \(thread not found\)/);
+});
+
 test('createReportFormatters.formatProgressReport returns localized idle hint', () => {
   const formatters = createFormatters({
     resolveSecurityContext: () => ({ mentionOnly: true, maxQueuePerChannel: 5, profile: 'public' }),

@@ -640,6 +640,7 @@ const appContext = createAppContext({
       getSupportedReasoningEffortLevels,
       getCliHealth,
       getProviderRateLimits,
+      getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       formatCliHealth,
       formatLanguageLabel,
       formatSecurityProfileLabel,

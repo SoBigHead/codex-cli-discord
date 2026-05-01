@@ -303,6 +303,7 @@ test('createTextCommandHandler sets Codex goal from free text', async () => {
   }]);
   assert.match(replies[0], /goal 已设置/);
   assert.match(replies[0], /ship Discord goal command/);
+  assert.match(replies[0], /设置 goal 不会自动开跑/);
 });
 
 test('createTextCommandHandler clears Codex goal', async () => {

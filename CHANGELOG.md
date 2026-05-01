@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.1] - 2026-05-01
+
+### Changed
+- Clarified that Codex goal set/resume operations only update the persisted goal state and do not start a task by themselves.
+- Added the current Codex goal, goal query failures, and no-session state to `/status` and `!status`.
+
 ## [0.12.0] - 2026-05-01
 
 ### Added

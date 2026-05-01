@@ -250,6 +250,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
   );
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.slashRef('status'), '/bot_status');
   assert.equal(calls.commandSurface.reportOptions.getRuntimeSnapshot, promptRuntime.getRuntimeSnapshot);
+  assert.equal(calls.commandSurface.reportOptions.getSessionId, identity.getSessionId);
   assert.equal(calls.commandSurface.settingsPanelOptions.resolveCompactThresholdSetting, sessionSettings.resolveCompactThresholdSetting);
   assert.equal(calls.commandSurface.workspaceBrowserOptions.commandActions, commandActions);
   assert.equal(typeof calls.commandSurface.workspaceBrowserOptions.resolveChildThreadWorkspaceMode, 'function');

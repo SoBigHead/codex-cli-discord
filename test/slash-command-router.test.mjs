@@ -403,6 +403,7 @@ test('createSlashCommandRouter sets a Codex goal through app-server', async () =
   }]);
   assert.match(state.replies[0].content, /goal 已设置/);
   assert.match(state.replies[0].content, /ship Discord goal command/);
+  assert.match(state.replies[0].content, /设置 goal 不会自动开跑/);
 });
 
 test('createSlashCommandRouter rejects Codex goal without a bound session', async () => {
