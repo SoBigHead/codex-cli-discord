@@ -6,6 +6,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.6] - 2026-05-03
+
+### Added
+- Added Claude Code fork support that mirrors Codex fork in Discord while using `--fork-session` on the first child-thread turn.
+
 ## [0.12.5] - 2026-05-03
 
 ### Changed

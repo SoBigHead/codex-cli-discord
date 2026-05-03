@@ -146,6 +146,7 @@ export function createRunnerArgsBuilder({
     const model = resolveModelSetting(session).value || defaultModel;
     const effort = resolveReasoningEffortSetting(session).value;
     const sessionId = getSessionId(session);
+    const pendingForkFromSessionId = String(session?.pendingForkFromSessionId || '').trim();
 
     if (model) args.push('--model', model);
     if (effort) args.push('--effort', effort);
@@ -156,8 +157,14 @@ export function createRunnerArgsBuilder({
       args.push('--permission-mode', 'acceptEdits');
     }
 
-    if (sessionId) args.push('--resume', sessionId);
-    else args.push('--session-id', randomUUID());
+    if (pendingForkFromSessionId) {
+      args.push('--resume', pendingForkFromSessionId, '--fork-session');
+      args.push('--session-id', sessionId || randomUUID());
+    } else if (sessionId) {
+      args.push('--resume', sessionId);
+    } else {
+      args.push('--session-id', randomUUID());
+    }
 
     if (systemText) args.push('--append-system-prompt', systemText);
     args.push('--allowedTools', 'default', '--', prompt);

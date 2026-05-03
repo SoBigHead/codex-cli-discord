@@ -34,6 +34,7 @@ export function buildRunnerArgs({
   compactStrategy = 'native',
   compactOnThreshold = true,
   modelAutoCompactTokenLimit = 0,
+  pendingForkFromSessionId = null,
 } = {}) {
   const normalizedProvider = normalizeCliProvider(provider);
   if (normalizedProvider === 'claude') {
@@ -43,6 +44,7 @@ export function buildRunnerArgs({
       mode,
       model,
       effort,
+      pendingForkFromSessionId,
     });
   }
   if (normalizedProvider === 'gemini') {
@@ -106,6 +108,7 @@ function buildClaudeArgs({
   mode,
   model,
   effort,
+  pendingForkFromSessionId,
 }) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages'];
 
@@ -117,7 +120,12 @@ function buildClaudeArgs({
 
   if (model) args.push('--model', model);
   if (effort) args.push('--effort', effort);
-  if (sessionId) args.push('--resume', sessionId);
+  if (pendingForkFromSessionId) {
+    args.push('--resume', pendingForkFromSessionId, '--fork-session');
+    if (sessionId) args.push('--session-id', sessionId);
+  } else if (sessionId) {
+    args.push('--resume', sessionId);
+  }
 
   args.push('--allowedTools', 'default', '--', prompt);
   return args;

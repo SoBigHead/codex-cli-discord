@@ -118,6 +118,48 @@ test('Claude long runner resolves a turn on result and reuses the hot process fo
   assert.match(logs.join('\n'), /\[claude-long\] reuse .*sessionId=sess-1/);
 });
 
+test('Claude long runner starts pending forks with --fork-session and the child session id', async () => {
+  const fake = createFakeSpawn();
+  const runner = createClaudeLongRunner({
+    spawnFn: fake.spawnFn,
+    getProviderBin: () => 'claude',
+    getSessionId: (session) => session.runnerSessionId || null,
+    resolveModelSetting: () => ({ value: null }),
+    resolveReasoningEffortSetting: () => ({ value: null }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    stopChildProcess: (child) => child.kill('SIGTERM'),
+    log: () => {},
+  });
+
+  const task = runner.runTask({
+    session: {
+      provider: 'claude',
+      mode: 'safe',
+      runnerSessionId: 'child-session',
+      pendingForkFromSessionId: 'parent-session',
+    },
+    sessionKey: 'thread-fork',
+    workspaceDir: '/tmp/workspace-fork',
+    prompt: 'first fork turn',
+  });
+
+  assert.equal(fake.children.length, 1);
+  assert.equal(fake.children[0].args[fake.children[0].args.indexOf('--resume') + 1], 'parent-session');
+  assert.equal(fake.children[0].args.includes('--fork-session'), true);
+  assert.equal(fake.children[0].args[fake.children[0].args.indexOf('--session-id') + 1], 'child-session');
+  assert.match(fake.writes[0], /"content":"first fork turn"/);
+
+  emitEvent(fake.children[0], {
+    type: 'result',
+    session_id: 'child-session',
+  });
+  const result = await task;
+
+  assert.equal(result.ok, true);
+  assert.equal(result.threadId, 'child-session');
+});
+
 test('Claude long runner surfaces result errors instead of treating them as success', async () => {
   const fake = createFakeSpawn();
   const runner = createClaudeLongRunner({

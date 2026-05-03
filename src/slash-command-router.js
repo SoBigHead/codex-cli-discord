@@ -4,9 +4,10 @@ import {
   normalizeCommandName,
 } from './command-spec.js';
 import {
-  createCodexForkThread,
-  formatCodexForkResult,
+  createProviderForkThread,
+  formatProviderForkResult,
   normalizeForkSessionId,
+  providerSupportsNativeFork,
 } from './codex-fork-flow.js';
 import {
   CODEX_GOAL_CONTINUATION_PROMPT,
@@ -599,11 +600,11 @@ export function createSlashCommandRouter({
   registerSlashHandlers(handlers, ['fork'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
     const provider = getSessionProvider(session);
-    if (provider !== 'codex') {
+    if (!providerSupportsNativeFork(provider)) {
       await respond({
         content: language === 'en'
-          ? `❌ Native fork is only available for Codex. Current provider is ${getProviderDisplayName(provider)}.`
-          : `❌ 原生 fork 只支持 Codex。当前 provider 是 ${getProviderDisplayName(provider)}。`,
+          ? `❌ Native fork is not available for ${getProviderDisplayName(provider)}.`
+          : `❌ ${getProviderDisplayName(provider)} 不支持原生 fork。`,
         flags: 64,
       });
       return;
@@ -612,7 +613,7 @@ export function createSlashCommandRouter({
     const parentSessionId = normalizeForkSessionId(getSessionId(session));
     const threadName = interaction.options.getString('name') || '';
     try {
-      const result = await createCodexForkThread({
+      const result = await createProviderForkThread({
         key,
         session,
         source: interaction,
@@ -627,12 +628,12 @@ export function createSlashCommandRouter({
         resolveSecurityContext,
       });
       await respond({
-        content: formatCodexForkResult(result, language),
+        content: formatProviderForkResult(result, language),
         flags: 64,
       });
     } catch (err) {
       await respond({
-        content: `❌ Codex fork 失败：${safeError(err)}`,
+        content: `❌ ${getProviderDisplayName(provider)} fork 失败：${safeError(err)}`,
         flags: 64,
       });
     }

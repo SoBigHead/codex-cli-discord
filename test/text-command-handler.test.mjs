@@ -250,14 +250,76 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
   assert.match(replies[0], /已创建 Codex fork：<#fork-channel-1>/);
 });
 
-test('createTextCommandHandler rejects fork for non-codex providers', async () => {
+test('createTextCommandHandler creates native Claude fork from text command', async () => {
   const replies = [];
-  const session = { provider: 'claude', language: 'zh' };
+  const parentSession = { provider: 'claude', language: 'zh', runnerSessionId: 'parent-claude-1' };
+  const childSession = { provider: 'claude', language: 'zh' };
+  const childThread = {
+    id: 'fork-channel-1',
+    setNameCalls: [],
+    async join() {},
+    async setName(name, reason) {
+      this.setNameCalls.push({ name, reason });
+    },
+    async send() {},
+  };
+  const threadCreates = [];
+  const handleCommand = createTextCommandHandler({
+    getSession: (key) => (key === 'fork-channel-1' ? childSession : parentSession),
+    getSessionId: (currentSession) => currentSession?.runnerSessionId || null,
+    getSessionProvider: (currentSession) => currentSession.provider,
+    getSessionLanguage: () => 'zh',
+    getProviderDisplayName: () => 'Claude Code',
+    getRuntimeSnapshot: () => ({ running: false, queued: 0 }),
+    commandActions: {
+      bindForkedSession(currentSession, binding) {
+        currentSession.runnerSessionId = binding.sessionId;
+        currentSession.forkedFromSessionId = binding.parentSessionId;
+        currentSession.forkedFromProvider = binding.provider;
+        currentSession.pendingForkFromSessionId = binding.pendingForkFromSessionId;
+        return binding;
+      },
+    },
+    async forkCodexThread() {
+      throw new Error('Codex fork should not run for Claude');
+    },
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+
+  await handleCommand({
+    id: 'message-1',
+    author: { id: 'user-1' },
+    channel: {
+      id: 'channel-1',
+      threads: {
+        async create(options) {
+          threadCreates.push(options);
+          return childThread;
+        },
+      },
+    },
+  }, 'channel-1', '!fork Claude fork thread');
+
+  assert.equal(parentSession.runnerSessionId, 'parent-claude-1');
+  assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
+  assert.equal(childSession.forkedFromSessionId, 'parent-claude-1');
+  assert.equal(childSession.forkedFromProvider, 'claude');
+  assert.equal(childSession.pendingForkFromSessionId, 'parent-claude-1');
+  assert.equal(threadCreates[0].name, 'Claude fork thread');
+  assert.deepEqual(childThread.setNameCalls, []);
+  assert.match(replies[0], /已创建 Claude fork：<#fork-channel-1>/);
+});
+
+test('createTextCommandHandler rejects fork for providers without native fork', async () => {
+  const replies = [];
+  const session = { provider: 'gemini', language: 'zh' };
   const handleCommand = createTextCommandHandler({
     getSession: () => session,
     getSessionProvider: (currentSession) => currentSession.provider,
     getSessionLanguage: () => 'zh',
-    getProviderDisplayName: () => 'Claude Code',
+    getProviderDisplayName: () => 'Gemini',
     async forkCodexThread() {
       throw new Error('should not fork');
     },
@@ -268,7 +330,7 @@ test('createTextCommandHandler rejects fork for non-codex providers', async () =
 
   await handleCommand(createMessage(), 'thread-1', '!fork');
 
-  assert.match(replies[0], /原生 fork 只支持 Codex/);
+  assert.match(replies[0], /不支持原生 fork/);
 });
 
 test('createTextCommandHandler sets Codex goal from free text', async () => {

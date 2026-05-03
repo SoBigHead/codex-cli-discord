@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   createCodexForkThread,
+  createProviderForkThread,
   formatCodexForkResult,
   parseForkTextInput,
 } from '../src/codex-fork-flow.js';
@@ -106,6 +107,63 @@ test('createCodexForkThread uses an optional requested Discord thread name', asy
 test('parseForkTextInput treats its only argument as the requested thread name', () => {
   assert.deepEqual(parseForkTextInput('  Demo   fork  '), { threadName: 'Demo fork' });
   assert.deepEqual(parseForkTextInput(''), { threadName: '' });
+});
+
+test('createProviderForkThread prepares Claude fork without mutating the parent session', async () => {
+  const parentSession = { provider: 'claude', runnerSessionId: 'parent-session' };
+  const childSession = { provider: 'claude', runnerSessionId: null };
+  const threadCreates = [];
+  const setNameCalls = [];
+  const result = await createProviderForkThread({
+    key: 'parent-channel',
+    session: parentSession,
+    source: {
+      ...createForkSource(),
+      channel: {
+        id: 'parent-channel',
+        threads: {
+          async create(options) {
+            threadCreates.push(options);
+            return {
+              id: 'child-channel',
+              async join() {},
+              async setName(name, reason) {
+                setNameCalls.push({ name, reason });
+              },
+              async send() {},
+            };
+          },
+        },
+      },
+    },
+    provider: 'claude',
+    parentSessionId: 'parent-session',
+    generateSessionId: () => 'child-session',
+    getSession: () => childSession,
+    commandActions: {
+      bindForkedSession(currentSession, binding) {
+        currentSession.runnerSessionId = binding.sessionId;
+        currentSession.forkedFromProvider = binding.provider;
+        currentSession.forkedFromSessionId = binding.parentSessionId;
+        currentSession.pendingForkFromSessionId = binding.pendingForkFromSessionId;
+        return binding;
+      },
+    },
+    async forkCodexThread() {
+      throw new Error('Codex fork should not run for Claude');
+    },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'claude');
+  assert.equal(result.forkedSessionId, 'child-session');
+  assert.equal(threadCreates[0].name, 'claude fork child-se from parent-s');
+  assert.equal(setNameCalls[0].name, 'claude fork child-se from parent-s');
+  assert.equal(parentSession.runnerSessionId, 'parent-session');
+  assert.equal(childSession.runnerSessionId, 'child-session');
+  assert.equal(childSession.forkedFromProvider, 'claude');
+  assert.equal(childSession.forkedFromSessionId, 'parent-session');
+  assert.equal(childSession.pendingForkFromSessionId, 'parent-session');
 });
 
 test('formatCodexForkResult makes prompt enqueue failure explicit', async () => {

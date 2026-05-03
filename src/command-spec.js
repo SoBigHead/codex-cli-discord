@@ -302,9 +302,9 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
         ).setRequired(true));
       },
     },
-    (!lockedProvider || lockedProvider === 'codex') && {
+    (!lockedProvider || lockedProvider === 'codex' || lockedProvider === 'claude') && {
       name: 'fork',
-      description: '用 Codex 原生 fork 创建一个新的 Discord thread，可选指定 thread 名',
+      description: '用当前 provider 原生 fork 创建一个新的 Discord thread，可选指定 thread 名',
       configure(builder) {
         return builder.addStringOption(o => o.setName('name').setDescription('可选：新 thread 名；留空自动生成').setRequired(false));
       },

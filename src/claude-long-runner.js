@@ -54,6 +54,7 @@ function buildClaudeLongArgs({
   workspaceDir,
   additionalWorkspaceDirs = [],
   sessionId,
+  pendingForkFromSessionId = null,
   resolveModelSetting,
   resolveReasoningEffortSetting,
 }) {
@@ -80,7 +81,12 @@ function buildClaudeLongArgs({
     args.push('--permission-mode', 'acceptEdits');
   }
 
-  if (sessionId) {
+  const forkFromSessionId = String(pendingForkFromSessionId || '').trim();
+  if (forkFromSessionId) {
+    args.push('--resume', forkFromSessionId, '--fork-session');
+    if (!sessionId) sessionId = randomUUID();
+    args.push('--session-id', sessionId);
+  } else if (sessionId) {
     args.push('--resume', sessionId);
   } else {
     sessionId = randomUUID();
@@ -402,6 +408,7 @@ export function createClaudeLongRunner({
       workspaceDir,
       additionalWorkspaceDirs,
       sessionId: requestedSessionId,
+      pendingForkFromSessionId: session?.pendingForkFromSessionId,
       resolveModelSetting,
       resolveReasoningEffortSetting,
     });

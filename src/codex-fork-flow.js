@@ -1,3 +1,16 @@
+import { randomUUID } from 'node:crypto';
+
+const FORKABLE_PROVIDERS = new Set(['codex', 'claude']);
+
+function normalizeForkProvider(value) {
+  const text = String(value || '').trim().toLowerCase();
+  return text || 'codex';
+}
+
+export function providerSupportsNativeFork(provider) {
+  return FORKABLE_PROVIDERS.has(normalizeForkProvider(provider));
+}
+
 export function normalizeForkSessionId(value) {
   const text = String(value || '').trim();
   return text || null;
@@ -18,10 +31,11 @@ export function parseForkTextInput(input) {
   return { threadName: normalizeForkThreadName(input) };
 }
 
-export function formatForkThreadName({ forkedSessionId, parentSessionId } = {}) {
+export function formatForkThreadName({ forkedSessionId, parentSessionId, provider = 'codex' } = {}) {
+  const providerLabel = normalizeForkProvider(provider);
   const forkShort = shortenId(forkedSessionId);
   const parentShort = shortenId(parentSessionId);
-  return `codex fork ${forkShort} from ${parentShort}`.slice(0, 100);
+  return `${providerLabel} fork ${forkShort} from ${parentShort}`.slice(0, 100);
 }
 
 function resolveThreadCreateChannel(channel) {
@@ -37,16 +51,16 @@ export function canCreateDiscordForkThread(source) {
   return Boolean(resolveThreadCreateChannel(source?.channel));
 }
 
-async function createDiscordForkThread(source, { parentSessionId, forkedSessionId, threadName = '' } = {}) {
+async function createDiscordForkThread(source, { parentSessionId, forkedSessionId, threadName = '', provider = 'codex' } = {}) {
   const targetChannel = resolveThreadCreateChannel(source?.channel);
   if (!targetChannel) {
     throw new Error('当前频道不支持创建 Discord thread，无法放置 fork。');
   }
   const requestedName = normalizeForkThreadName(threadName);
   const thread = await targetChannel.threads.create({
-    name: requestedName || formatForkThreadName({ forkedSessionId, parentSessionId }),
+    name: requestedName || formatForkThreadName({ forkedSessionId, parentSessionId, provider }),
     autoArchiveDuration: 1440,
-    reason: `Codex fork from ${parentSessionId}`,
+    reason: `${normalizeForkProvider(provider)} fork from ${parentSessionId}`,
   });
   try {
     await thread.join?.();
@@ -79,6 +93,15 @@ export function createSyntheticForkMessage(source, childThread) {
 }
 
 export async function createCodexForkThread({
+  ...options
+} = {}) {
+  return createProviderForkThread({
+    ...options,
+    provider: 'codex',
+  });
+}
+
+export async function createProviderForkThread({
   key,
   session,
   source,
@@ -93,10 +116,15 @@ export async function createCodexForkThread({
   enqueuePrompt,
   resolveSecurityContext,
   createThread = createDiscordForkThread,
+  generateSessionId = randomUUID,
 } = {}) {
+  const normalizedProvider = normalizeForkProvider(provider);
   const normalizedParentSessionId = normalizeForkSessionId(parentSessionId);
   if (!normalizedParentSessionId) {
     return { ok: false, reason: 'missing_parent_session' };
+  }
+  if (!providerSupportsNativeFork(normalizedProvider)) {
+    return { ok: false, reason: 'fork_unsupported', provider: normalizedProvider };
   }
   const runtime = getRuntimeSnapshot(key) || {};
   if (runtime.running) {
@@ -105,50 +133,61 @@ export async function createCodexForkThread({
   if (!canCreateDiscordForkThread(source)) {
     return { ok: false, reason: 'thread_unavailable' };
   }
-  if (typeof forkCodexThread !== 'function') {
+  if (normalizedProvider === 'codex' && typeof forkCodexThread !== 'function') {
     return { ok: false, reason: 'fork_unavailable' };
   }
   if (typeof getSession !== 'function') {
-    throw new Error('getSession is required for Codex fork');
+    throw new Error('getSession is required for provider fork');
   }
   if (typeof commandActions.bindForkedSession !== 'function') {
-    throw new Error('bindForkedSession is required for Codex fork');
+    throw new Error('bindForkedSession is required for provider fork');
+  }
+
+  const plannedForkedSessionId = normalizedProvider === 'claude'
+    ? normalizeForkSessionId(generateSessionId())
+    : null;
+  if (normalizedProvider === 'claude' && !plannedForkedSessionId) {
+    throw new Error('Claude fork did not receive a generated session id');
   }
 
   const childThread = await createThread(source, {
     parentSessionId: normalizedParentSessionId,
-    forkedSessionId: null,
+    forkedSessionId: plannedForkedSessionId,
     threadName,
+    provider: normalizedProvider,
   });
   if (!childThread?.id) {
     throw new Error('Discord thread creation did not return a thread id');
   }
 
   let forkResult = null;
-  try {
-    forkResult = await forkCodexThread({
-      threadId: normalizedParentSessionId,
-    });
-  } catch (err) {
+  let forkedSessionId = plannedForkedSessionId;
+  if (normalizedProvider === 'codex') {
     try {
-      await childThread.delete?.('Codex fork failed before session binding');
-    } catch {
+      forkResult = await forkCodexThread({
+        threadId: normalizedParentSessionId,
+      });
+    } catch (err) {
+      try {
+        await childThread.delete?.('Codex fork failed before session binding');
+      } catch {
+      }
+      throw err;
     }
-    throw err;
-  }
-  const forkedSessionId = normalizeForkSessionId(forkResult?.threadId || forkResult?.thread?.id);
-  if (!forkedSessionId) {
-    try {
-      await childThread.delete?.('Codex fork did not return a session id');
-    } catch {
+    forkedSessionId = normalizeForkSessionId(forkResult?.threadId || forkResult?.thread?.id);
+    if (!forkedSessionId) {
+      try {
+        await childThread.delete?.('Codex fork did not return a session id');
+      } catch {
+      }
+      throw new Error('Codex fork did not return a session id');
     }
-    throw new Error('Codex fork did not return a session id');
   }
   if (!normalizeForkThreadName(threadName) && typeof childThread.setName === 'function') {
     try {
       await childThread.setName(
-        formatForkThreadName({ parentSessionId: normalizedParentSessionId, forkedSessionId }),
-        'Codex fork session assigned',
+        formatForkThreadName({ parentSessionId: normalizedParentSessionId, forkedSessionId, provider: normalizedProvider }),
+        `${normalizedProvider} fork session assigned`,
       );
     } catch {
     }
@@ -162,7 +201,8 @@ export async function createCodexForkThread({
     sessionId: forkedSessionId,
     parentSessionId: normalizedParentSessionId,
     parentChannelId: key,
-    provider,
+    provider: normalizedProvider,
+    pendingForkFromSessionId: normalizedProvider === 'claude' ? normalizedParentSessionId : null,
   });
 
   const normalizedPrompt = String(prompt || '').trim();
@@ -189,6 +229,7 @@ export async function createCodexForkThread({
 
   return {
     ok: true,
+    provider: normalizedProvider,
     parentSessionId: normalizedParentSessionId,
     forkedSessionId,
     forkedFromId: normalizeForkSessionId(forkResult?.forkedFromId) || normalizedParentSessionId,
@@ -199,29 +240,46 @@ export async function createCodexForkThread({
   };
 }
 
+function formatForkProviderLabel(provider) {
+  const normalizedProvider = normalizeForkProvider(provider);
+  if (normalizedProvider === 'claude') return 'Claude';
+  if (normalizedProvider === 'gemini') return 'Gemini';
+  return 'Codex';
+}
+
 export function formatCodexForkResult(result, language = 'zh') {
+  return formatProviderForkResult(result, language);
+}
+
+export function formatProviderForkResult(result, language = 'zh') {
+  const providerLabel = formatForkProviderLabel(result?.provider || 'codex');
   if (!result?.ok) {
     if (result?.reason === 'missing_parent_session') {
       return language === 'en'
-        ? '❌ No Codex session is bound here yet. Run one task first or pass `session_id`.'
-        : '❌ 当前频道还没有绑定 Codex session。先跑一轮，或传入 `session_id`。';
+        ? `❌ No ${providerLabel} session is bound here yet. Run one task first.`
+        : `❌ 当前频道还没有绑定 ${providerLabel} session。先跑一轮。`;
     }
     if (result?.reason === 'parent_running') {
       return language === 'en'
         ? '⏳ The parent channel is running. Fork after the current task finishes.'
         : '⏳ 父频道正在运行任务，等这轮结束后再 fork。';
     }
+    if (result?.reason === 'fork_unsupported') {
+      return language === 'en'
+        ? `❌ Native fork is unavailable for ${providerLabel}.`
+        : `❌ ${providerLabel} 不支持原生 fork。`;
+    }
     if (result?.reason === 'fork_unavailable') {
       return language === 'en'
-        ? '❌ Codex native fork is unavailable in this runtime.'
-        : '❌ 当前运行环境没有接入 Codex 原生 fork。';
+        ? `❌ ${providerLabel} native fork is unavailable in this runtime.`
+        : `❌ 当前运行环境没有接入 ${providerLabel} 原生 fork。`;
     }
     if (result?.reason === 'thread_unavailable') {
       return language === 'en'
         ? '❌ This Discord channel cannot create a fork thread.'
         : '❌ 当前 Discord 频道不能创建 fork thread。';
     }
-    return language === 'en' ? '❌ Codex fork failed.' : '❌ Codex fork 失败。';
+    return language === 'en' ? `❌ ${providerLabel} fork failed.` : `❌ ${providerLabel} fork 失败。`;
   }
 
   const channelLabel = result.childThread?.id ? `<#${result.childThread.id}>` : result.childThread?.name || '(new thread)';
@@ -231,8 +289,8 @@ export function formatCodexForkResult(result, language = 'zh') {
   if (language === 'en') {
     return [
       promptError
-        ? `⚠️ Created Codex fork in ${channelLabel}, but the prompt was not queued`
-        : `✅ Created Codex fork in ${channelLabel}`,
+        ? `⚠️ Created ${providerLabel} fork in ${channelLabel}, but the prompt was not queued`
+        : `✅ Created ${providerLabel} fork in ${channelLabel}`,
       `• fork session: \`${result.forkedSessionId}\``,
       `• parent session: \`${result.parentSessionId}\``,
       promptQueued ? `• prompt queued in fork${queuedAhead > 0 ? ` (${queuedAhead} ahead)` : ''}` : null,
@@ -241,8 +299,8 @@ export function formatCodexForkResult(result, language = 'zh') {
   }
   return [
     promptError
-      ? `⚠️ 已创建 Codex fork：${channelLabel}，但 prompt 没有入队`
-      : `✅ 已创建 Codex fork：${channelLabel}`,
+      ? `⚠️ 已创建 ${providerLabel} fork：${channelLabel}，但 prompt 没有入队`
+      : `✅ 已创建 ${providerLabel} fork：${channelLabel}`,
     `• fork session: \`${result.forkedSessionId}\``,
     `• parent session: \`${result.parentSessionId}\``,
     promptQueued ? `• prompt 已进入 fork 队列${queuedAhead > 0 ? `，前面还有 ${queuedAhead} 条` : ''}` : null,

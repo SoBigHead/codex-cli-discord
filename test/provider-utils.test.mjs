@@ -238,6 +238,36 @@ test('buildRunnerArgs builds claude print stream command with prompt delimiter',
   ]);
 });
 
+test('buildRunnerArgs can start a Claude fork from a parent session', () => {
+  const args = buildRunnerArgs({
+    provider: 'claude',
+    sessionId: 'child-456',
+    pendingForkFromSessionId: 'parent-123',
+    workspaceDir: '/tmp/work',
+    prompt: 'first fork task',
+    mode: 'safe',
+  });
+
+  assert.deepEqual(args, [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--include-partial-messages',
+    '--permission-mode',
+    'acceptEdits',
+    '--resume',
+    'parent-123',
+    '--fork-session',
+    '--session-id',
+    'child-456',
+    '--allowedTools',
+    'default',
+    '--',
+    'first fork task',
+  ]);
+});
+
 test('buildRunnerArgs builds gemini stream-json command with provider-specific permissions', () => {
   const args = buildRunnerArgs({
     provider: 'gemini',

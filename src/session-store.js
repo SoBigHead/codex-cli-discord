@@ -202,6 +202,7 @@ export function createSessionStore({
         forkedFromSessionId: null,
         forkedFromChannelId: null,
         forkedAt: null,
+        pendingForkFromSessionId: null,
         configOverrides: [],
         updatedAt: new Date().toISOString(),
       };
@@ -353,6 +354,10 @@ export function createSessionStore({
       session.forkedAt = null;
       migrated = true;
     }
+    if (session.pendingForkFromSessionId === undefined) {
+      session.pendingForkFromSessionId = null;
+      migrated = true;
+    }
 
     const normalizedWorkspaceDir = normalizeWorkspaceDir(session.workspaceDir);
     if (session.workspaceDir !== normalizedWorkspaceDir) {
@@ -472,6 +477,11 @@ export function createSessionStore({
     const normalizedForkedAt = normalizeChannelId(session.forkedAt);
     if (session.forkedAt !== normalizedForkedAt) {
       session.forkedAt = normalizedForkedAt;
+      migrated = true;
+    }
+    const normalizedPendingForkFromSessionId = normalizeChannelId(session.pendingForkFromSessionId);
+    if (session.pendingForkFromSessionId !== normalizedPendingForkFromSessionId) {
+      session.pendingForkFromSessionId = normalizedPendingForkFromSessionId;
       migrated = true;
     }
 

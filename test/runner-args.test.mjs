@@ -443,6 +443,37 @@ test('createRunnerArgsBuilder passes extra context to Claude append-system-promp
   assert.equal(args.at(-1), 'hello');
 });
 
+test('createRunnerArgsBuilder uses Claude fork-session from pending fork parent', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'provider unsupported' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+  });
+
+  const args = buildSessionRunnerArgs({
+    provider: 'claude',
+    session: {
+      provider: 'claude',
+      mode: 'safe',
+      runnerSessionId: 'child-session',
+      pendingForkFromSessionId: 'parent-session',
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'first fork turn',
+  });
+
+  assert.equal(args[args.indexOf('--resume') + 1], 'parent-session');
+  assert.equal(args.includes('--fork-session'), true);
+  assert.equal(args[args.indexOf('--session-id') + 1], 'child-session');
+  assert.equal(args.at(-1), 'first fork turn');
+});
+
 test('createRunnerArgsBuilder falls back to prompt context for Gemini', () => {
   const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
     defaultModel: null,

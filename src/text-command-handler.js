@@ -4,10 +4,11 @@ import {
   normalizeCommandName,
 } from './command-spec.js';
 import {
-  createCodexForkThread,
-  formatCodexForkResult,
+  createProviderForkThread,
+  formatProviderForkResult,
   normalizeForkSessionId,
   parseForkTextInput,
+  providerSupportsNativeFork,
 } from './codex-fork-flow.js';
 import {
   CODEX_GOAL_CONTINUATION_PROMPT,
@@ -443,19 +444,19 @@ export function createTextCommandHandler({
       case 'fork': {
         const language = getSessionLanguage(session);
         const provider = getSessionProvider(session);
-        if (provider !== 'codex') {
+        if (!providerSupportsNativeFork(provider)) {
           await safeReply(
             message,
             language === 'en'
-              ? `❌ Native fork is only available for Codex. Current provider is ${getProviderDisplayName(provider)}.`
-              : `❌ 原生 fork 只支持 Codex。当前 provider 是 ${getProviderDisplayName(provider)}。`,
+              ? `❌ Native fork is not available for ${getProviderDisplayName(provider)}.`
+              : `❌ ${getProviderDisplayName(provider)} 不支持原生 fork。`,
           );
           return;
         }
         const parsed = parseForkTextInput(arg);
         const parentSessionId = normalizeForkSessionId(getSessionId(session));
         try {
-          const result = await createCodexForkThread({
+          const result = await createProviderForkThread({
             key,
             session,
             source: message,
@@ -469,9 +470,9 @@ export function createTextCommandHandler({
             enqueuePrompt,
             resolveSecurityContext,
           });
-          await safeReply(message, formatCodexForkResult(result, language));
+          await safeReply(message, formatProviderForkResult(result, language));
         } catch (err) {
-          await safeReply(message, `❌ Codex fork 失败：${safeError(err)}`);
+          await safeReply(message, `❌ ${getProviderDisplayName(provider)} fork 失败：${safeError(err)}`);
         }
         break;
       }

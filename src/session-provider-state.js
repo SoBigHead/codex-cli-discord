@@ -11,6 +11,7 @@ const PROVIDER_SCOPED_SESSION_DEFAULTS = Object.freeze({
   compactThresholdTokens: null,
   nativeCompactTokenLimit: null,
   runtimeMode: null,
+  pendingForkFromSessionId: null,
   configOverrides: Object.freeze([]),
 });
 
@@ -27,6 +28,7 @@ export const PROVIDER_SCOPED_SESSION_FIELDS = Object.freeze([
   'compactThresholdTokens',
   'nativeCompactTokenLimit',
   'runtimeMode',
+  'pendingForkFromSessionId',
   'configOverrides',
 ]);
 

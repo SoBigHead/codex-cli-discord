@@ -286,6 +286,7 @@ export function createPromptOrchestrator({
     const session = getSession(key, { channel: message.channel || null });
     const startingSessionId = getSessionId(session);
     const startingLastInputTokens = session.lastInputTokens;
+    const startingPendingForkFromSessionId = String(session?.pendingForkFromSessionId || '').trim() || null;
     const workspaceDir = ensureWorkspace(session, key);
     const language = normalizeUiLanguage(getSessionLanguage(session));
     const replyDelivery = resolveReplyDeliverySetting(session);
@@ -478,11 +479,20 @@ export function createPromptOrchestrator({
 
       const inputTokens = extractInputTokensFromUsage(result.usage);
       const resultSessionId = String(result.threadId || '').trim() || null;
+      const clearPendingForkIfResolved = () => {
+        if (!startingPendingForkFromSessionId || !resultSessionId) return false;
+        if (session.pendingForkFromSessionId !== null) {
+          session.pendingForkFromSessionId = null;
+          return true;
+        }
+        return false;
+      };
       const sessionSwitchedUnexpectedly = Boolean(
         startingSessionId
           && resultSessionId
           && resultSessionId !== startingSessionId
-          && !nativeCompactAutoContinueActive,
+          && !nativeCompactAutoContinueActive
+          && !startingPendingForkFromSessionId,
       );
       let sessionDirty = false;
       if (nativeCompactAutoContinueActive) {
@@ -494,6 +504,9 @@ export function createPromptOrchestrator({
         }
         if (inputTokens !== null) {
           session.lastInputTokens = inputTokens;
+          sessionDirty = true;
+        }
+        if (clearPendingForkIfResolved()) {
           sessionDirty = true;
         }
         if (startingSessionId && resultSessionId && resultSessionId !== startingSessionId && !nativeCompactSwitchedDuringRetry) {
@@ -510,6 +523,9 @@ export function createPromptOrchestrator({
         }
         if (inputTokens !== null) {
           session.lastInputTokens = inputTokens;
+          sessionDirty = true;
+        }
+        if (clearPendingForkIfResolved()) {
           sessionDirty = true;
         }
       } else if (result.ok && sessionSwitchedUnexpectedly) {
@@ -541,6 +557,9 @@ export function createPromptOrchestrator({
             `失败期间新建了新的 ${formatProviderSessionTerm(getSessionProvider(session), language)}：${resultSessionId}，当前仍保留原 ${formatProviderSessionTerm(getSessionProvider(session), language)}：${startingSessionId}。如需继续新 session，请显式执行 ${slashRef('resume')} ${resultSessionId}。`,
           ]);
         }
+        if (clearPendingForkIfResolved()) {
+          sessionDirty = true;
+        }
       } else {
         if (resultSessionId) {
           setSessionId(session, resultSessionId);
@@ -551,6 +570,9 @@ export function createPromptOrchestrator({
         }
         if (inputTokens !== null) {
           session.lastInputTokens = inputTokens;
+          sessionDirty = true;
+        }
+        if (clearPendingForkIfResolved()) {
           sessionDirty = true;
         }
       }

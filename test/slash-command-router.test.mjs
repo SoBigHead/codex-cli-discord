@@ -347,6 +347,71 @@ test('createSlashCommandRouter creates native Codex fork in a new thread and pre
   assert.match(state.replies[0].content, /fork-session-1/);
 });
 
+test('createSlashCommandRouter creates native Claude fork in a new thread and records pending fork source', async () => {
+  const parentSession = { provider: 'claude', language: 'zh', runnerSessionId: 'parent-claude-1' };
+  const childSession = { provider: 'claude', language: 'zh' };
+  const threadCreates = [];
+  const childThread = {
+    id: 'fork-channel-1',
+    setNameCalls: [],
+    async join() {},
+    async setName(name, reason) {
+      this.setNameCalls.push({ name, reason });
+    },
+    async send() {},
+  };
+  const state = createRouterState({
+    getSession(key) {
+      return key === 'fork-channel-1' ? childSession : parentSession;
+    },
+    getSessionProvider: (currentSession) => currentSession.provider,
+    getSessionId: (currentSession) => currentSession?.runnerSessionId || null,
+    getRuntimeSnapshot: () => ({ running: false, queued: 0 }),
+    getProviderDisplayName: (provider) => provider === 'claude' ? 'Claude Code' : provider,
+    commandActions: {
+      bindForkedSession(currentSession, binding) {
+        currentSession.runnerSessionId = binding.sessionId;
+        currentSession.forkedFromSessionId = binding.parentSessionId;
+        currentSession.forkedFromChannelId = binding.parentChannelId;
+        currentSession.forkedFromProvider = binding.provider;
+        currentSession.pendingForkFromSessionId = binding.pendingForkFromSessionId;
+        return binding;
+      },
+    },
+    async forkCodexThread() {
+      throw new Error('Codex fork should not run for Claude');
+    },
+  });
+  const interaction = createInteraction('cx_fork', { name: 'claude branch' });
+  interaction.channel = {
+    id: 'channel-1',
+    threads: {
+      async create(options) {
+        threadCreates.push(options);
+        return childThread;
+      },
+    },
+  };
+
+  const handled = await state.router({
+    interaction,
+    commandName: 'fork',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(parentSession.runnerSessionId, 'parent-claude-1');
+  assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
+  assert.equal(childSession.forkedFromSessionId, 'parent-claude-1');
+  assert.equal(childSession.forkedFromProvider, 'claude');
+  assert.equal(childSession.pendingForkFromSessionId, 'parent-claude-1');
+  assert.equal(threadCreates[0].name, 'claude branch');
+  assert.deepEqual(childThread.setNameCalls, []);
+  assert.match(state.replies[0].content, /已创建 Claude fork：<#fork-channel-1>/);
+});
+
 test('createSlashCommandRouter refuses Codex fork while parent is running', async () => {
   const state = createRouterState({
     getSessionId: () => 'parent-1',
@@ -368,13 +433,13 @@ test('createSlashCommandRouter refuses Codex fork while parent is running', asyn
   assert.equal(state.replies[0].content, '⏳ 父频道正在运行任务，等这轮结束后再 fork。');
 });
 
-test('createSlashCommandRouter rejects fork for non-codex providers', async () => {
+test('createSlashCommandRouter rejects fork for providers without native fork', async () => {
   const state = createRouterState({
     async forkCodexThread() {
       throw new Error('should not fork');
     },
   });
-  state.session.provider = 'claude';
+  state.session.provider = 'gemini';
 
   const handled = await state.router({
     interaction: createInteraction('cx_fork'),
@@ -385,7 +450,7 @@ test('createSlashCommandRouter rejects fork for non-codex providers', async () =
   });
 
   assert.equal(handled, true);
-  assert.match(state.replies[0].content, /原生 fork 只支持 Codex/);
+  assert.match(state.replies[0].content, /不支持原生 fork/);
 });
 
 test('createSlashCommandRouter sets a Codex goal through app-server', async () => {

@@ -348,6 +348,7 @@ export function createSessionCommandActions({
     session.forkedFromSessionId = null;
     session.forkedFromChannelId = null;
     session.forkedAt = null;
+    session.pendingForkFromSessionId = null;
   }
 
   function bindForkedSession(session, {
@@ -355,6 +356,7 @@ export function createSessionCommandActions({
     parentSessionId,
     parentChannelId,
     provider = null,
+    pendingForkFromSessionId = null,
   } = {}) {
     const normalizedProvider = normalizeProvider(provider || getSessionProvider(session));
     const currentProvider = getSessionProvider(session);
@@ -366,6 +368,7 @@ export function createSessionCommandActions({
     session.forkedFromSessionId = normalizeSessionKey(parentSessionId);
     session.forkedFromChannelId = normalizeSessionKey(parentChannelId);
     session.forkedAt = new Date().toISOString();
+    session.pendingForkFromSessionId = normalizeSessionKey(pendingForkFromSessionId);
     saveDb();
     return {
       provider: normalizedProvider,
@@ -374,6 +377,7 @@ export function createSessionCommandActions({
       parentSessionId: session.forkedFromSessionId,
       parentChannelId: session.forkedFromChannelId,
       forkedAt: session.forkedAt,
+      pendingForkFromSessionId: session.pendingForkFromSessionId,
     };
   }
 
