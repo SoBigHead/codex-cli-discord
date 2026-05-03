@@ -17,6 +17,20 @@ export function uniqueDirs(dirs = []) {
   return out;
 }
 
+function tomlString(value) {
+  return JSON.stringify(String(value ?? ''));
+}
+
+function composePromptWithSystemFallback(prompt, systemPrompt) {
+  const systemText = String(systemPrompt || '').trim();
+  if (!systemText) return prompt;
+  return [
+    systemText,
+    '',
+    String(prompt || ''),
+  ].join('\n');
+}
+
 export function createRunnerArgsBuilder({
   defaultModel = null,
   normalizeProvider = (value) => String(value || '').trim().toLowerCase(),
@@ -31,27 +45,49 @@ export function createRunnerArgsBuilder({
 } = {}) {
   const providerAdapters = createProviderAdapterRegistry([
     createCodexProviderAdapter({
-      buildArgs: ({ session, workspaceDir, prompt, inputImages = [] }) => buildCodexArgs({ session, workspaceDir, prompt, inputImages }),
+      buildArgs: ({ session, workspaceDir, prompt, inputImages = [], systemPrompt = '' }) => buildCodexArgs({
+        session,
+        workspaceDir,
+        prompt,
+        inputImages,
+        systemPrompt,
+      }),
     }),
     createClaudeProviderAdapter({
-      buildArgs: ({ session, workspaceDir, prompt, additionalWorkspaceDirs = [] }) => buildClaudeArgs({
+      buildArgs: ({ session, workspaceDir, prompt, additionalWorkspaceDirs = [], systemPrompt = '' }) => buildClaudeArgs({
         session,
         workspaceDir,
         prompt,
         additionalWorkspaceDirs,
+        systemPrompt,
       }),
     }),
     createGeminiProviderAdapter({
-      buildArgs: ({ session, prompt }) => buildGeminiArgs({ session, prompt }),
+      buildArgs: ({ session, prompt, systemPrompt = '' }) => buildGeminiArgs({ session, prompt, systemPrompt }),
     }),
   ]);
 
-  function buildSessionRunnerArgs({ provider, session, workspaceDir, prompt, additionalWorkspaceDirs = [], inputImages = [] }) {
+  function buildSessionRunnerArgs({
+    provider,
+    session,
+    workspaceDir,
+    prompt,
+    additionalWorkspaceDirs = [],
+    inputImages = [],
+    systemPrompt = '',
+  }) {
     const adapter = providerAdapters.get(provider);
-    return adapter.runtime.buildArgs({ session, workspaceDir, prompt, additionalWorkspaceDirs, inputImages });
+    return adapter.runtime.buildArgs({
+      session,
+      workspaceDir,
+      prompt,
+      additionalWorkspaceDirs,
+      inputImages,
+      systemPrompt,
+    });
   }
 
-  function buildCodexArgs({ session, workspaceDir, prompt, inputImages = [] }) {
+  function buildCodexArgs({ session, workspaceDir, prompt, inputImages = [], systemPrompt = '' }) {
     const sessionId = getSessionId(session);
     const permissionArgs = buildCodexPermissionArgs(session.mode, { resume: Boolean(sessionId) });
     const model = resolveModelSetting(session).value || defaultModel;
@@ -62,11 +98,13 @@ export function createRunnerArgsBuilder({
     const compactSetting = resolveCompactStrategySetting(session);
     const compactEnabled = resolveCompactEnabledSetting(session);
     const nativeLimit = resolveNativeCompactTokenLimitSetting(session);
+    const systemText = String(systemPrompt || '').trim();
     const shouldPassFastMode = fastMode.source === 'session override'
       || fastMode.source === 'parent channel'
       || fastMode.enabled === false;
 
     const common = ['--enable', 'goals'];
+    if (systemText) common.push('-c', `developer_instructions=${tomlString(systemText)}`);
     if (codexProfile?.isExplicit) {
       if (!codexProfile.valid) {
         throw new Error(`invalid Codex profile: ${codexProfile.value} (${codexProfile.error || 'unknown error'})`);
@@ -94,13 +132,14 @@ export function createRunnerArgsBuilder({
     return ['exec', '--json', '--skip-git-repo-check', ...permissionArgs, '-C', workspaceDir, ...common, prompt];
   }
 
-  function buildClaudeArgs({ session, workspaceDir, prompt, additionalWorkspaceDirs = [] }) {
+  function buildClaudeArgs({ session, workspaceDir, prompt, additionalWorkspaceDirs = [], systemPrompt = '' }) {
     const args = [
       '-p',
       '--verbose',
       '--output-format', 'stream-json',
       '--include-partial-messages',
     ];
+    const systemText = String(systemPrompt || '').trim();
     for (const dir of uniqueDirs([workspaceDir, ...additionalWorkspaceDirs])) {
       args.push('--add-dir', dir);
     }
@@ -120,14 +159,16 @@ export function createRunnerArgsBuilder({
     if (sessionId) args.push('--resume', sessionId);
     else args.push('--session-id', randomUUID());
 
+    if (systemText) args.push('--append-system-prompt', systemText);
     args.push('--allowedTools', 'default', '--', prompt);
     return args;
   }
 
-  function buildGeminiArgs({ session, prompt }) {
+  function buildGeminiArgs({ session, prompt, systemPrompt = '' }) {
     const args = ['--output-format', 'stream-json'];
     const model = resolveModelSetting(session).value || defaultModel;
     const sessionId = getSessionId(session);
+    const promptText = composePromptWithSystemFallback(prompt, systemPrompt);
 
     if (session.mode === 'dangerous') {
       args.push('--yolo');
@@ -137,7 +178,7 @@ export function createRunnerArgsBuilder({
 
     if (model) args.push('--model', model);
     if (sessionId) args.push('--resume', sessionId);
-    args.push('--prompt', prompt);
+    args.push('--prompt', promptText);
     return args;
   }
 

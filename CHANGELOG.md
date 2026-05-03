@@ -6,6 +6,18 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.3] - 2026-05-03
+
+### Added
+- Added configurable Discord extra info for agent prompts, with status reporting, token estimates, slash/text commands, inheritance, and environment defaults.
+
+### Changed
+- Sends Discord extra info through provider system-prompt channels where supported, matching Hermes-style context injection for Codex and normal Claude runs.
+- Keeps `/status` compact by showing extra info state and token cost without rendering the full resolved text.
+
+### Fixed
+- Preserved compatible per-turn extra info delivery for Gemini and Claude long-runtime sessions when no dynamic system-prompt channel is available.
+
 ## [0.12.2] - 2026-05-01
 
 ### Fixed

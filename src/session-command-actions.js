@@ -39,6 +39,11 @@ function normalizeOptionalReplyDeliveryMode(value) {
   throw new Error(`invalid reply delivery mode: ${value}`);
 }
 
+function normalizeOptionalExtraInfoText(value) {
+  const text = normalizeOptionalOverride(value);
+  return text === null ? null : text;
+}
+
 function normalizeSessionKey(value) {
   const text = String(value || '').trim();
   return text || null;
@@ -192,6 +197,25 @@ export function createSessionCommandActions({
     session.replyDeliveryMode = normalizeOptionalReplyDeliveryMode(mode);
     saveDb();
     return { replyDeliveryMode: session.replyDeliveryMode };
+  }
+
+  function setExtraInfoEnabled(session, enabled) {
+    session.extraInfoEnabled = enabled;
+    saveDb();
+    return { extraInfoEnabled: session.extraInfoEnabled };
+  }
+
+  function setExtraInfoText(session, text) {
+    session.extraInfoText = normalizeOptionalExtraInfoText(text);
+    saveDb();
+    return { extraInfoText: session.extraInfoText };
+  }
+
+  function resetExtraInfo(session) {
+    session.extraInfoEnabled = null;
+    session.extraInfoText = null;
+    saveDb();
+    return { extraInfoEnabled: session.extraInfoEnabled, extraInfoText: session.extraInfoText };
   }
 
   function setGlobalModelDefault(_session, value) {
@@ -459,6 +483,8 @@ export function createSessionCommandActions({
     clearSessionId(session);
     session.lastInputTokens = null;
     session.configOverrides = [];
+    session.extraInfoEnabled = null;
+    session.extraInfoText = null;
     clearForkMetadata(session);
     saveDb();
     return { sessionId: getSessionId(session), configOverrides: session.configOverrides };
@@ -503,6 +529,9 @@ export function createSessionCommandActions({
     setFastMode,
     setRuntimeMode,
     setReplyDeliveryMode,
+    setExtraInfoEnabled,
+    setExtraInfoText,
+    resetExtraInfo,
     setGlobalModelDefault,
     setGlobalCodexProfileDefault,
     setGlobalReasoningEffortDefault,

@@ -51,6 +51,8 @@ const COMMAND_ALIASES = Object.freeze({
   guide: 'onboarding',
   lang: 'language',
   cd: 'setdir',
+  'extra-info': 'extra_info',
+  extrainfo: 'extra_info',
   defaultdir: 'setdefaultdir',
   rollout_sessions: 'sessions',
   project_sessions: 'sessions',
@@ -252,6 +254,23 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
           .addStringOption(o => o.setName('key').setDescription('配置项').setRequired(true)
             .addChoices(...compactKeyChoices))
           .addStringOption(o => o.setName('value').setDescription('值：如 native / 272000 / on / default').setRequired(false));
+      },
+    },
+    {
+      name: 'extra_info',
+      aliases: ['extrainfo'],
+      description: '配置每条 prompt 的额外信息（开关、内容、token 占用）',
+      configure(builder) {
+        return builder
+          .addStringOption(o => o.setName('key').setDescription('配置项').setRequired(true)
+            .addChoices(
+              { name: 'status', value: 'status' },
+              { name: 'on', value: 'on' },
+              { name: 'off', value: 'off' },
+              { name: 'text', value: 'text' },
+              { name: 'default', value: 'default' },
+            ))
+          .addStringOption(o => o.setName('value').setDescription('text 的内容，可用 {thread} {parent} {msg}').setRequired(false));
       },
     },
     {

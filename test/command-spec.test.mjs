@@ -13,6 +13,8 @@ test('normalizeCommandName maps text and slash aliases to canonical names', () =
   assert.equal(normalizeCommandName('guide'), 'onboarding');
   assert.equal(normalizeCommandName('lang'), 'language');
   assert.equal(normalizeCommandName('cd'), 'setdir');
+  assert.equal(normalizeCommandName('extra-info'), 'extra_info');
+  assert.equal(normalizeCommandName('extrainfo'), 'extra_info');
   assert.equal(normalizeCommandName('defaultdir'), 'setdefaultdir');
   assert.equal(normalizeCommandName('project_sessions'), 'sessions');
   assert.equal(normalizeCommandName('chat_resume'), 'resume');
@@ -35,6 +37,7 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   const runtimeEntry = sharedEntries.find((entry) => entry.name === 'runtime');
   const forkEntry = sharedEntries.find((entry) => entry.name === 'fork');
   const goalEntry = sharedEntries.find((entry) => entry.name === 'goal');
+  const extraInfoEntry = sharedEntries.find((entry) => entry.name === 'extra_info');
 
   assert.equal(Array.isArray(newEntry.aliases), false);
   assert.ok(settingsEntry);
@@ -45,6 +48,7 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.ok(runtimeEntry);
   assert.ok(forkEntry);
   assert.ok(goalEntry);
+  assert.deepEqual(extraInfoEntry.aliases, ['extrainfo']);
   assert.ok(sharedEntries.some((entry) => entry.name === 'provider'));
   assert.ok(!lockedEntries.some((entry) => entry.name === 'provider'));
   assert.ok(!lockedEntries.some((entry) => entry.name === 'fast'));

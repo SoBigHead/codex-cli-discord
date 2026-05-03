@@ -188,6 +188,34 @@ test('createRunnerArgsBuilder passes native image inputs to codex exec', () => {
   ]);
 });
 
+test('createRunnerArgsBuilder passes extra context to codex developer instructions', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: 'gpt-5-codex',
+    normalizeProvider: (value) => value,
+    getSessionId: () => null,
+    resolveFastModeSetting: () => ({ enabled: false, source: 'config.toml' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+  });
+
+  const args = buildSessionRunnerArgs({
+    provider: 'codex',
+    session: {
+      mode: 'safe',
+      configOverrides: [],
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'inspect',
+    systemPrompt: '[Via agents-in-discord; discord_thread=thread-1]\nline two',
+  });
+
+  const systemIndex = args.indexOf('developer_instructions="[Via agents-in-discord; discord_thread=thread-1]\\nline two"');
+  assert.notEqual(systemIndex, -1);
+  assert.equal(args[systemIndex - 1], '-c');
+  assert.equal(args.at(-1), 'inspect');
+});
+
 test('createRunnerArgsBuilder passes fast mode through when inherited from the parent channel', () => {
   const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
     defaultModel: 'gpt-5-codex',
@@ -381,4 +409,64 @@ test('createRunnerArgsBuilder uses claude dash-p for normal runtime args', () =>
   assert.equal(args.includes('--dangerously-skip-permissions'), true);
   assert.equal(args.at(-2), '--');
   assert.equal(args.at(-1), 'hello');
+});
+
+test('createRunnerArgsBuilder passes extra context to Claude append-system-prompt', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: () => 'claude-session-1',
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'provider unsupported' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+  });
+
+  const args = buildSessionRunnerArgs({
+    provider: 'claude',
+    session: {
+      provider: 'claude',
+      mode: 'safe',
+      runnerSessionId: 'claude-session-1',
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+    systemPrompt: '[Via agents-in-discord; discord_thread=thread-1]',
+  });
+
+  const systemIndex = args.indexOf('--append-system-prompt');
+  assert.notEqual(systemIndex, -1);
+  assert.equal(args[systemIndex + 1], '[Via agents-in-discord; discord_thread=thread-1]');
+  assert.equal(args.at(-2), '--');
+  assert.equal(args.at(-1), 'hello');
+});
+
+test('createRunnerArgsBuilder falls back to prompt context for Gemini', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: null,
+    normalizeProvider: (value) => value,
+    getSessionId: () => null,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'provider unsupported' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+  });
+
+  const args = buildSessionRunnerArgs({
+    provider: 'gemini',
+    session: {
+      provider: 'gemini',
+      mode: 'safe',
+      runnerSessionId: null,
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+    systemPrompt: '[Via agents-in-discord; discord_thread=thread-1]',
+  });
+
+  assert.equal(args.at(-2), '--prompt');
+  assert.equal(args.at(-1), '[Via agents-in-discord; discord_thread=thread-1]\n\nhello');
 });

@@ -2,6 +2,11 @@ import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './wo
 import { getProviderCommandAlias } from './command-spec.js';
 import { formatCodexProfileLabel, formatReplyDeliveryModeLabel } from './session-settings.js';
 import { formatCodexGoalBudget, formatCodexGoalStatus } from './codex-goal-flow.js';
+import {
+  buildExtraInfoPromptLine,
+  DEFAULT_EXTRA_INFO_TEMPLATE,
+  estimatePromptTokenCount,
+} from './extra-info.js';
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
 
@@ -43,6 +48,7 @@ export function createReportFormatters({
   resolveFastModeSetting = () => ({ enabled: false, supported: false, source: 'provider unsupported' }),
   resolveRuntimeModeSetting = () => ({ mode: 'normal', supported: false, source: 'provider unsupported' }),
   resolveReplyDeliverySetting = () => ({ mode: 'card_mention', source: 'env default' }),
+  resolveExtraInfoSetting = () => ({ enabled: true, enabledSource: 'env default', text: DEFAULT_EXTRA_INFO_TEMPLATE, textSource: 'env default' }),
   getEffectiveSecurityProfile = () => ({ profile: 'team', source: 'env default' }),
   resolveCompactStrategySetting = () => ({ strategy: 'native', source: 'env default' }),
   resolveCompactEnabledSetting = () => ({ enabled: true, source: 'env default' }),
@@ -72,6 +78,8 @@ export function createReportFormatters({
   formatWorkspaceSessionResetReason = (provider) => `reset because workspace policy unavailable for ${provider}`,
   humanAge = (ms) => `${ms}ms`,
   formatTokenValue = (value) => String(value ?? '-'),
+  truncate = (text, max) => (String(text || '').length <= max ? String(text || '') : `${String(text || '').slice(0, Math.max(0, max - 3))}...`),
+  estimateExtraInfoTokens = estimatePromptTokenCount,
   formatConfigCommandStatus = () => 'disabled',
   describeConfigPolicy = () => '(none)',
   formatSessionStatusLabel = () => '`(auto)`',
@@ -476,6 +484,28 @@ export function createReportFormatters({
     return `• fork 来源: ${getProviderDisplayName(provider)} \`${parentSessionId}\`${channelPart}`;
   }
 
+  function formatExtraInfoStatusLine({ key, session, channel, language = 'zh' }) {
+    const setting = resolveExtraInfoSetting(session);
+    const rendered = buildExtraInfoPromptLine({
+      setting,
+      channel,
+      key,
+      messageId: '000000000000000000',
+    });
+    const tokens = estimateExtraInfoTokens(rendered);
+    const enabledSource = formatSettingSourceLabel(setting.enabledSource || 'env default', language);
+    const textSource = formatSettingSourceLabel(setting.textSource || 'env default', language);
+
+    if (language === 'en') {
+      return setting.enabled
+        ? `• extra info: on (${enabledSource}), ~${tokens} tokens, text ${textSource}`
+        : `• extra info: off (${enabledSource}), 0 tokens`;
+    }
+    return setting.enabled
+      ? `• 额外信息：on（${enabledSource}），约 ${tokens} tokens，内容 ${textSource}`
+      : `• 额外信息：off（${enabledSource}），0 tokens`;
+  }
+
   function formatStatusReport(key, session, channel = null, { rateLimitReport = null, goalReport = null } = {}) {
     const language = getSessionLanguage(session);
     const lang = normalizeUiLanguage(language);
@@ -493,6 +523,7 @@ export function createReportFormatters({
     const compactThreshold = resolveCompactThresholdSetting(session);
     const nativeLimit = resolveNativeCompactTokenLimitSetting(session);
     const replyDelivery = resolveReplyDeliverySetting(session);
+    const extraInfoLine = formatExtraInfoStatusLine({ key, session, channel, language: lang });
     const modeDesc = session?.mode === 'dangerous'
       ? (lang === 'en' ? 'dangerous (no sandbox, full access)' : 'dangerous（无沙盒，全权限）')
       : (lang === 'en' ? 'safe (sandboxed, no network)' : 'safe（沙盒隔离，无网络）');
@@ -519,6 +550,7 @@ export function createReportFormatters({
         ...workspaceLines,
         `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)} (${formatSettingSourceLabel(compactSetting.source, lang)})`,
         `• reply delivery: ${formatReplyDeliveryModeLabel(replyDelivery.mode, lang)} (${formatSettingSourceLabel(replyDelivery.source, lang)})`,
+        extraInfoLine,
         `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'} (${formatSettingSourceLabel(compactEnabled.source, lang)})`,
         `• compact token limit: ${compactThreshold.tokens} (${formatSettingSourceLabel(compactThreshold.source, lang)})`,
         `• ${nativeCompact.label}: ${nativeCompact.value}`,
@@ -547,6 +579,7 @@ export function createReportFormatters({
       ...workspaceLines,
       `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)}（${formatSettingSourceLabel(compactSetting.source, lang)}）`,
       `• 回复方式：${formatReplyDeliveryModeLabel(replyDelivery.mode, lang)}（${formatSettingSourceLabel(replyDelivery.source, lang)}）`,
+      extraInfoLine,
       `• compact enabled: ${compactEnabled.enabled ? 'on' : 'off'}（${formatSettingSourceLabel(compactEnabled.source, lang)}）`,
       `• compact token limit: ${compactThreshold.tokens}（${formatSettingSourceLabel(compactThreshold.source, lang)}）`,
       `• ${nativeCompact.label}: ${nativeCompact.value}`,
@@ -842,6 +875,52 @@ export function createReportFormatters({
     ].join('\n');
   }
 
+  function formatExtraInfoConfigHelp(language = 'zh') {
+    if (language === 'en') {
+      return [
+        'Usage: `!extra_info <status|on|off|text|default> [value]`',
+        `Slash: \`${slashRef('extra_info')} key:<...> value:<...>\``,
+        'Placeholders: `{thread}`, `{parent}`, `{msg}`',
+      ].join('\n');
+    }
+    return [
+      '用法：`!extra_info <status|on|off|text|default> [value]`',
+      `Slash：\`${slashRef('extra_info')} key:<...> value:<...>\``,
+      '占位符：`{thread}`、`{parent}`、`{msg}`',
+    ].join('\n');
+  }
+
+  function formatExtraInfoConfigReport(language, session, key, channel = null, changed = false) {
+    const setting = resolveExtraInfoSetting(session);
+    const rendered = buildExtraInfoPromptLine({
+      setting,
+      channel,
+      key,
+      messageId: '000000000000000000',
+    });
+    const tokens = estimateExtraInfoTokens(rendered);
+    const enabledSource = formatSettingSourceLabel(setting.enabledSource || 'env default', language);
+    const textSource = formatSettingSourceLabel(setting.textSource || 'env default', language);
+    const preview = rendered ? truncate(rendered, 300) : '';
+
+    if (language === 'en') {
+      return [
+        changed ? '✅ Extra info updated' : 'ℹ️ Extra info',
+        `• enabled: ${setting.enabled ? 'on' : 'off'} (${enabledSource})`,
+        `• tokens: ~${setting.enabled ? tokens : 0}`,
+        `• text source: ${textSource}`,
+        setting.enabled ? `• rendered text: \`${preview}\`` : null,
+      ].filter(Boolean).join('\n');
+    }
+    return [
+      changed ? '✅ 额外信息已更新' : 'ℹ️ 当前额外信息',
+      `• 开关：${setting.enabled ? 'on' : 'off'}（${enabledSource}）`,
+      `• tokens：约 ${setting.enabled ? tokens : 0}`,
+      `• 内容来源：${textSource}`,
+      setting.enabled ? `• 渲染结果：\`${preview}\`` : null,
+    ].filter(Boolean).join('\n');
+  }
+
   function formatReasoningEffortHelp(language, provider = 'codex') {
     const levels = getReasoningEffortLevels(provider);
     if (!levels.length) {
@@ -1073,6 +1152,7 @@ export function createReportFormatters({
           : compact.supportsNativeStrategy
             ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (native available; current provider keeps the provider-default native limit)`
             : `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — context compaction config (hard only on current provider)`,
+        `• \`${slashRef('extra_info')} key:<...> value:<...>\` / \`!extra_info <...>\` — configure extra context and token cost`,
         '• `!mode <safe|dangerous>` — execution mode',
         providerSupportsRawConfigOverrides(provider)
           ? '• `!config <key=value>` — append raw provider config override'
@@ -1130,6 +1210,7 @@ export function createReportFormatters({
         : compact.supportsNativeStrategy
           ? `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 支持 native，但 native_limit 走 provider 默认行为）`
           : `• \`${slashRef('compact')} key:<...> value:<...>\` / \`!compact <...>\` — 上下文压缩配置（当前 provider 仅支持 hard）`,
+      `• \`${slashRef('extra_info')} key:<...> value:<...>\` / \`!extra_info <...>\` — 配置额外信息和 token 占用`,
       '• `!mode <safe|dangerous>` — 执行模式',
       providerSupportsRawConfigOverrides(provider)
         ? '• `!config <key=value>` — 添加 provider 原生配置透传'
@@ -1245,6 +1326,8 @@ export function createReportFormatters({
     formatDoctorReport,
     formatCompactStrategyConfigHelp,
     formatCompactConfigReport,
+    formatExtraInfoConfigHelp,
+    formatExtraInfoConfigReport,
     formatReasoningEffortHelp,
     formatLanguageConfigHelp,
     formatLanguageConfigReport,

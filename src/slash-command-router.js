@@ -121,6 +121,8 @@ export function createSlashCommandRouter({
   formatCancelReport,
   formatCompactStrategyConfigHelp,
   formatCompactConfigReport,
+  formatExtraInfoConfigHelp,
+  formatExtraInfoConfigReport,
   formatCompactConfigUnsupported = (provider) => `Compact config unsupported for ${provider}`,
   formatProviderSessionLabel = (provider) => `${provider} session`,
   formatReasoningEffortUnsupported,
@@ -132,6 +134,7 @@ export function createSlashCommandRouter({
   parseSecurityProfileInput,
   parseTimeoutConfigAction,
   parseCompactConfigAction,
+  parseExtraInfoConfigAction = () => ({ type: 'status' }),
   providerSupportsCompactConfigAction = () => true,
   cancelChannelWork,
   closeRuntimeSession = () => false,
@@ -528,6 +531,39 @@ export function createSlashCommandRouter({
     commandActions.applyCompactConfig(session, parsed);
     await respond({
       content: formatCompactConfigReport(language, session, true),
+      flags: 64,
+    });
+  });
+
+  registerSlashHandlers(handlers, ['extra_info', 'extrainfo'], async ({ interaction, key, session, respond }) => {
+    const language = getSessionLanguage(session);
+    const parsed = parseExtraInfoConfigAction(
+      interaction.options.getString('key'),
+      interaction.options.getString('value') || '',
+    );
+    if (!parsed || parsed.type === 'invalid') {
+      await respond({
+        content: formatExtraInfoConfigHelp(language),
+        flags: 64,
+      });
+      return;
+    }
+    if (parsed.type === 'status') {
+      await respond({
+        content: formatExtraInfoConfigReport(language, session, key, interaction.channel, false),
+        flags: 64,
+      });
+      return;
+    }
+    if (parsed.type === 'set_enabled') {
+      commandActions.setExtraInfoEnabled(session, parsed.enabled);
+    } else if (parsed.type === 'set_text') {
+      commandActions.setExtraInfoText(session, parsed.text);
+    } else if (parsed.type === 'reset') {
+      commandActions.resetExtraInfo(session);
+    }
+    await respond({
+      content: formatExtraInfoConfigReport(language, session, key, interaction.channel, true),
       flags: 64,
     });
   });

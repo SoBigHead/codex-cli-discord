@@ -82,6 +82,19 @@ function createRouterState(overrides = {}) {
       setLanguage: () => ({ language: 'zh' }),
       setSecurityProfile: () => ({ profile: 'team' }),
       setTimeoutMs: () => ({ timeoutSetting: { timeoutMs: 0, source: 'default' } }),
+      setExtraInfoEnabled(currentSession, enabled) {
+        currentSession.extraInfoEnabled = enabled;
+        return { extraInfoEnabled: enabled };
+      },
+      setExtraInfoText(currentSession, text) {
+        currentSession.extraInfoText = text;
+        return { extraInfoText: text };
+      },
+      resetExtraInfo(currentSession) {
+        currentSession.extraInfoEnabled = null;
+        currentSession.extraInfoText = null;
+        return { extraInfoEnabled: null, extraInfoText: null };
+      },
     },
     isOnboardingEnabled: () => true,
     buildOnboardingActionRows: () => [],
@@ -109,6 +122,10 @@ function createRouterState(overrides = {}) {
     formatCancelReport: (outcome) => JSON.stringify(outcome),
     formatCompactStrategyConfigHelp: () => '',
     formatCompactConfigReport: () => '',
+    formatExtraInfoConfigHelp: () => 'extra-help',
+    formatExtraInfoConfigReport: (_language, currentSession, key, channel, changed) => (
+      `${currentSession.extraInfoEnabled}:${currentSession.extraInfoText}:${key}:${channel?.id}:${changed}`
+    ),
     formatCompactConfigUnsupported: () => '',
     formatReasoningEffortUnsupported: () => '',
     normalizeProvider: (value) => value,
@@ -134,6 +151,14 @@ function createRouterState(overrides = {}) {
     parseSecurityProfileInput: () => 'team',
     parseTimeoutConfigAction: () => ({ type: 'status' }),
     parseCompactConfigAction: () => ({ type: 'status' }),
+    parseExtraInfoConfigAction: (key, value) => {
+      if (key === 'on') return { type: 'set_enabled', enabled: true };
+      if (key === 'off') return { type: 'set_enabled', enabled: false };
+      if (key === 'text') return { type: 'set_text', text: value };
+      if (key === 'default') return { type: 'reset' };
+      if (key === 'bad') return { type: 'invalid' };
+      return { type: 'status' };
+    },
     providerSupportsCompactConfigAction: () => true,
     cancelChannelWork: (key, reason) => {
       const outcome = { key, reason };
@@ -598,6 +623,26 @@ test('createSlashCommandRouter rejects only unsupported compact actions for non-
     content: '⚠️ 当前 provider Gemini CLI 不支持 `native` 压缩。',
     flags: 64,
   }]);
+});
+
+test('createSlashCommandRouter updates extra info config', async () => {
+  const state = createRouterState();
+
+  const handled = await state.router({
+    interaction: createInteraction('cx_extra_info', {
+      key: 'text',
+      value: '[D {thread}]',
+    }),
+    commandName: 'extra_info',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(state.session.extraInfoText, '[D {thread}]');
+  assert.match(state.replies[0].content, /true/);
+  assert.match(state.replies[0].content, /\[D \{thread\}\]/);
 });
 
 test('createSlashCommandRouter shows compact help for removed manual continue subcommand', async () => {

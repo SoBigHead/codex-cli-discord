@@ -105,6 +105,11 @@ export function createSessionStore({
   normalizeSessionCompactStrategy,
   normalizeSessionCompactEnabled,
   normalizeSessionCompactTokenLimit,
+  normalizeExtraInfoEnabled = () => null,
+  normalizeExtraInfoText = (value) => {
+    const text = String(value ?? '').trim();
+    return text || null;
+  },
   normalizeReplyDeliveryMode = () => null,
   resolveDefaultWorkspace = () => ({ workspaceDir: null, source: 'unset', envKey: null }),
 } = {}) {
@@ -186,6 +191,8 @@ export function createSessionStore({
         timeoutMs: null,
         codexProfile: null,
         replyDeliveryMode: null,
+        extraInfoEnabled: null,
+        extraInfoText: null,
         compactStrategy: null,
         compactEnabled: null,
         compactThresholdTokens: null,
@@ -302,6 +309,14 @@ export function createSessionStore({
       session.replyDeliveryMode = null;
       migrated = true;
     }
+    if (session.extraInfoEnabled === undefined) {
+      session.extraInfoEnabled = null;
+      migrated = true;
+    }
+    if (session.extraInfoText === undefined) {
+      session.extraInfoText = null;
+      migrated = true;
+    }
     if (session.compactStrategy === undefined) {
       session.compactStrategy = null;
       migrated = true;
@@ -388,6 +403,16 @@ export function createSessionStore({
     const normalizedReplyDeliveryMode = normalizeReplyDeliveryMode(session.replyDeliveryMode);
     if (session.replyDeliveryMode !== normalizedReplyDeliveryMode) {
       session.replyDeliveryMode = normalizedReplyDeliveryMode;
+      migrated = true;
+    }
+    const normalizedExtraInfoEnabled = normalizeExtraInfoEnabled(session.extraInfoEnabled);
+    if (session.extraInfoEnabled !== normalizedExtraInfoEnabled) {
+      session.extraInfoEnabled = normalizedExtraInfoEnabled;
+      migrated = true;
+    }
+    const normalizedExtraInfoText = normalizeExtraInfoText(session.extraInfoText);
+    if (session.extraInfoText !== normalizedExtraInfoText) {
+      session.extraInfoText = normalizedExtraInfoText;
       migrated = true;
     }
     if ('lastPrompt' in session) {

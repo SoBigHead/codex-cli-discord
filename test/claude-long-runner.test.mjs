@@ -151,6 +151,34 @@ test('Claude long runner surfaces result errors instead of treating them as succ
   assert.equal(result.threadId, 'sess-error');
 });
 
+test('Claude long runner folds per-turn extra context into stdin payload', async () => {
+  const fake = createFakeSpawn();
+  const runner = createClaudeLongRunner({
+    spawnFn: fake.spawnFn,
+    getProviderBin: () => 'claude',
+    getSessionId: () => 'sess-context',
+    resolveModelSetting: () => ({ value: null }),
+    resolveReasoningEffortSetting: () => ({ value: null }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    stopChildProcess: (child) => child.kill('SIGTERM'),
+    log: () => {},
+  });
+
+  const task = runner.runTask({
+    session: { provider: 'claude', mode: 'safe', runnerSessionId: 'sess-context' },
+    sessionKey: 'thread-context',
+    workspaceDir: '/tmp/workspace-context',
+    prompt: 'hello',
+    systemPrompt: '[Via agents-in-discord; discord_thread=thread-1]',
+  });
+  const payload = JSON.parse(fake.writes[0]);
+  assert.equal(payload.message.content, '[Via agents-in-discord; discord_thread=thread-1]\n\nhello');
+
+  emitEvent(fake.children[0], { type: 'result', session_id: 'sess-context' });
+  assert.equal((await task).ok, true);
+});
+
 test('Claude long runner keeps API retry details for final errors', async () => {
   const fake = createFakeSpawn();
   const runner = createClaudeLongRunner({

@@ -111,6 +111,8 @@ import {
   normalizeUiLanguage,
   parseCompactConfigAction,
   parseCompactConfigFromText,
+  parseExtraInfoConfigAction,
+  parseExtraInfoConfigFromText,
   parseFastModeAction,
   parseRuntimeModeAction,
   parseReasoningEffortInput,
@@ -119,6 +121,11 @@ import {
   parseUiLanguageInput,
   parseWorkspaceCommandAction,
 } from './session-settings.js';
+import {
+  DEFAULT_EXTRA_INFO_TEMPLATE,
+  normalizeExtraInfoEnabled,
+  normalizeExtraInfoTemplate,
+} from './extra-info.js';
 import {
   parseCommandActionButtonId,
 } from './slash-command-router.js';
@@ -246,6 +253,9 @@ const ENABLE_CONFIG_CMD = String(process.env.ENABLE_CONFIG_CMD || 'false').toLow
 const CONFIG_POLICY = parseConfigAllowlist(
   process.env.CONFIG_ALLOWLIST || 'personality,model_reasoning_effort,model_auto_compact_token_limit',
 );
+const EXTRA_INFO_ENABLED = normalizeExtraInfoEnabled(resolveProviderScopedEnv('EXTRA_INFO_ENABLED', BOT_PROVIDER, process.env));
+const EXTRA_INFO_TEXT = normalizeExtraInfoTemplate(resolveProviderScopedEnv('EXTRA_INFO_TEXT', BOT_PROVIDER, process.env))
+  || DEFAULT_EXTRA_INFO_TEMPLATE;
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT || path.join(ROOT, 'workspaces');
 const WORKSPACE_LOCK_ROOT = path.join(DATA_DIR, 'workspace-locks');
 const SHARED_CHILD_THREAD_WORKSPACE_MODE = process.env.CHILD_THREAD_WORKSPACE_MODE;
@@ -422,6 +432,8 @@ const appContext = createAppContext({
     modelAutoCompactTokenLimit: MODEL_AUTO_COMPACT_TOKEN_LIMIT,
     defaultReplyDeliveryMode: resolveReplyDeliveryDefault().mode,
     readDefaultReplyDeliveryMode: () => resolveReplyDeliveryDefault().mode,
+    defaultExtraInfoEnabled: EXTRA_INFO_ENABLED === null ? true : EXTRA_INFO_ENABLED,
+    defaultExtraInfoText: EXTRA_INFO_TEXT,
     defaultCodexProfile: resolveDefaultCodexProfile().profile,
     readDefaultCodexProfile: resolveDefaultCodexProfile,
     defaultModel: DEFAULT_MODEL,
@@ -461,6 +473,8 @@ const appContext = createAppContext({
     normalizeSessionCompactStrategy,
     normalizeSessionCompactEnabled,
     normalizeSessionCompactTokenLimit,
+    normalizeExtraInfoEnabled,
+    normalizeExtraInfoText: normalizeExtraInfoTemplate,
     normalizeReplyDeliveryMode,
     resolveDefaultWorkspace: resolveProviderDefaultWorkspace,
   },
@@ -649,6 +663,7 @@ const appContext = createAppContext({
       formatWorkspaceSessionResetReason,
       humanAge,
       formatTokenValue,
+      truncate,
     },
     workspaceBrowserOptions: {
       ActionRowBuilder,
@@ -679,6 +694,7 @@ const appContext = createAppContext({
       parseSecurityProfileInput,
       parseTimeoutConfigAction,
       parseCompactConfigAction,
+      parseExtraInfoConfigAction,
       resolvePath,
       forkCodexThread: (options) => forkCodexThread({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
@@ -703,6 +719,7 @@ const appContext = createAppContext({
       parseSecurityProfileInput,
       parseTimeoutConfigAction,
       parseCompactConfigFromText,
+      parseExtraInfoConfigFromText,
       parseConfigKey,
       parseReasoningEffortInput,
       parseWorkspaceCommandAction,

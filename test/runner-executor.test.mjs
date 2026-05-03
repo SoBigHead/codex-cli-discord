@@ -104,10 +104,12 @@ test('createRunnerExecutor routes Claude long runtime to the hot-session runner'
     sessionKey: 'discord-thread-1',
     workspaceDir: '/tmp/workspace',
     prompt: 'hello',
+    systemPrompt: '[Via agents-in-discord; discord_thread=thread-1]',
   });
 
   assert.equal(result.ok, true);
   assert.equal(result.threadId, 'claude-session-1');
   assert.equal(longRunInput.sessionKey, 'discord-thread-1');
   assert.equal(longRunInput.prompt, 'hello');
+  assert.equal(longRunInput.systemPrompt, '[Via agents-in-discord; discord_thread=thread-1]');
 });

@@ -120,6 +120,16 @@ function formatArgs(args) {
   return JSON.stringify(args);
 }
 
+function composePromptWithSystemFallback(prompt, systemPrompt) {
+  const systemText = String(systemPrompt || '').trim();
+  if (!systemText) return String(prompt || '');
+  return [
+    systemText,
+    '',
+    String(prompt || ''),
+  ].join('\n');
+}
+
 function formatClaudeApiRetry(event) {
   if (event?.type !== 'system' || event?.subtype !== 'api_retry') return '';
   const status = event.error_status || event.status || '';
@@ -430,6 +440,7 @@ export function createClaudeLongRunner({
     sessionKey,
     workspaceDir,
     prompt,
+    systemPrompt = '',
     additionalWorkspaceDirs = [],
     onSpawn,
     wasCancelled,
@@ -523,7 +534,7 @@ export function createClaudeLongRunner({
         session_id: entry.sessionId || '',
         message: {
           role: 'user',
-          content: String(prompt || ''),
+          content: composePromptWithSystemFallback(prompt, systemPrompt),
         },
         parent_tool_use_id: null,
       }) + '\n';

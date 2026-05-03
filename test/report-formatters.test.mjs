@@ -169,6 +169,23 @@ test('createReportFormatters.formatStatusReport uses provider defaults for model
   assert.doesNotMatch(report, /\(unknown\)/);
 });
 
+test('createReportFormatters.formatStatusReport shows extra info token cost', () => {
+  const formatters = createFormatters({
+    resolveExtraInfoSetting: () => ({
+      enabled: true,
+      enabledSource: 'session override',
+      text: '[D {thread} {msg}]',
+      textSource: 'session override',
+    }),
+    estimateExtraInfoTokens: (text) => text.length,
+  });
+  const report = formatters.formatStatusReport('thread-1', { provider: 'codex', language: 'zh' }, { id: 'thread-1' });
+
+  assert.match(report, /额外信息：on/);
+  assert.match(report, /约 31 tokens/);
+  assert.doesNotMatch(report, /\[D thread-1 000000000000000000\]/);
+});
+
 test('createReportFormatters.formatStatusReport labels lastInputTokens as previous run usage', () => {
   const formatters = createFormatters();
   const session = {

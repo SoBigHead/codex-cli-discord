@@ -428,6 +428,64 @@ test('createTextCommandHandler updates codex fast mode', async () => {
   assert.deepEqual(replies, ['codex:true:session override:true']);
 });
 
+test('createTextCommandHandler updates extra info config', async () => {
+  const replies = [];
+  const session = { provider: 'codex', language: 'zh', extraInfoEnabled: null, extraInfoText: null };
+
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    getSessionLanguage: () => 'zh',
+    parseExtraInfoConfigFromText: () => ({ type: 'set_text', text: '[D {thread}]' }),
+    commandActions: {
+      setExtraInfoText(currentSession, text) {
+        currentSession.extraInfoText = text;
+        return { extraInfoText: text };
+      },
+    },
+    formatExtraInfoConfigHelp: () => 'help',
+    formatExtraInfoConfigReport: (_language, currentSession, key, channel, changed) => (
+      `${currentSession.extraInfoText}:${key}:${channel?.id}:${changed}`
+    ),
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+
+  await handleCommand(createMessage(), 'thread-1', '!extra_info text [D {thread}]');
+
+  assert.equal(session.extraInfoText, '[D {thread}]');
+  assert.deepEqual(replies, ['[D {thread}]:thread-1:channel-1:true']);
+});
+
+test('createTextCommandHandler accepts !extra-info alias', async () => {
+  const replies = [];
+  const session = { provider: 'codex', language: 'zh', extraInfoEnabled: null };
+
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    getSessionLanguage: () => 'zh',
+    parseExtraInfoConfigFromText: () => ({ type: 'set_enabled', enabled: false }),
+    commandActions: {
+      setExtraInfoEnabled(currentSession, enabled) {
+        currentSession.extraInfoEnabled = enabled;
+        return { extraInfoEnabled: enabled };
+      },
+    },
+    formatExtraInfoConfigHelp: () => 'help',
+    formatExtraInfoConfigReport: (_language, currentSession, key, channel, changed) => (
+      `${currentSession.extraInfoEnabled}:${key}:${channel?.id}:${changed}`
+    ),
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+
+  await handleCommand(createMessage(), 'thread-1', '!extra-info off');
+
+  assert.equal(session.extraInfoEnabled, false);
+  assert.deepEqual(replies, ['false:thread-1:channel-1:true']);
+});
+
 test('createTextCommandHandler updates Claude runtime mode and closes current hot process', async () => {
   const replies = [];
   const closed = [];

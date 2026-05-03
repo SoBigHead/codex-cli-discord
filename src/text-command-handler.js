@@ -71,6 +71,8 @@ export function createTextCommandHandler({
   formatCancelReport,
   formatCompactStrategyConfigHelp,
   formatCompactConfigReport,
+  formatExtraInfoConfigHelp,
+  formatExtraInfoConfigReport,
   formatCompactConfigUnsupported = (provider) => `Compact config unsupported for ${provider}`,
   formatProviderRawConfigSurface = (provider) => `raw config surface unavailable for ${provider}`,
   formatProviderSessionLabel = (provider) => `${provider} session`,
@@ -85,6 +87,7 @@ export function createTextCommandHandler({
   parseSecurityProfileInput,
   parseTimeoutConfigAction,
   parseCompactConfigFromText,
+  parseExtraInfoConfigFromText,
   parseConfigKey,
   parseReasoningEffortInput,
   getEffectiveSecurityProfile,
@@ -591,6 +594,28 @@ export function createTextCommandHandler({
         }
         commandActions.applyCompactConfig(session, parsed);
         await safeReply(message, formatCompactConfigReport(language, session, true));
+        break;
+      }
+
+      case 'extra_info': {
+        const language = getSessionLanguage(session);
+        const parsed = parseExtraInfoConfigFromText(arg || 'status');
+        if (!parsed || parsed.type === 'invalid') {
+          await safeReply(message, formatExtraInfoConfigHelp(language));
+          break;
+        }
+        if (parsed.type === 'status') {
+          await safeReply(message, formatExtraInfoConfigReport(language, session, key, message.channel, false));
+          break;
+        }
+        if (parsed.type === 'set_enabled') {
+          commandActions.setExtraInfoEnabled(session, parsed.enabled);
+        } else if (parsed.type === 'set_text') {
+          commandActions.setExtraInfoText(session, parsed.text);
+        } else if (parsed.type === 'reset') {
+          commandActions.resetExtraInfo(session);
+        }
+        await safeReply(message, formatExtraInfoConfigReport(language, session, key, message.channel, true));
         break;
       }
 

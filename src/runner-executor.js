@@ -76,6 +76,7 @@ export function createRunnerExecutor({
     sessionKey = null,
     workspaceDir,
     prompt,
+    systemPrompt = '',
     inputImages = [],
     onSpawn,
     wasCancelled,
@@ -97,6 +98,7 @@ export function createRunnerExecutor({
         sessionKey,
         workspaceDir,
         prompt,
+        systemPrompt,
         additionalWorkspaceDirs,
         onSpawn,
         wasCancelled,
@@ -105,7 +107,15 @@ export function createRunnerExecutor({
       });
     }
 
-    const args = buildSessionRunnerArgs({ provider, session, workspaceDir, prompt, additionalWorkspaceDirs, inputImages });
+    const args = buildSessionRunnerArgs({
+      provider,
+      session,
+      workspaceDir,
+      prompt,
+      systemPrompt,
+      additionalWorkspaceDirs,
+      inputImages,
+    });
     const timeoutMs = resolveTimeoutSetting(session).timeoutMs;
     const bin = getProviderBin(provider);
 
@@ -137,6 +147,7 @@ export function createRunnerExecutor({
           session: recoverySession,
           workspaceDir,
           prompt: buildClaudeRecoveryPrompt(),
+          systemPrompt,
           additionalWorkspaceDirs,
         });
         const recovered = await spawnRunner({ provider, args: recoveryArgs, cwd: workspaceDir, workspaceDir }, {

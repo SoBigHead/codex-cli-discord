@@ -50,6 +50,23 @@ test('createSessionCommandActions.setProvider clears bound session and persists'
   assert.equal(saveCount, 1);
 });
 
+test('createSessionCommandActions updates extra info settings', () => {
+  let saveCount = 0;
+  const actions = createSessionCommandActions({
+    saveDb: () => {
+      saveCount += 1;
+    },
+  });
+  const session = { extraInfoEnabled: null, extraInfoText: null };
+
+  assert.deepEqual(actions.setExtraInfoEnabled(session, false), { extraInfoEnabled: false });
+  assert.deepEqual(actions.setExtraInfoText(session, ' custom {thread} '), { extraInfoText: 'custom {thread}' });
+  assert.equal(session.extraInfoEnabled, false);
+  assert.equal(session.extraInfoText, 'custom {thread}');
+  assert.deepEqual(actions.resetExtraInfo(session), { extraInfoEnabled: null, extraInfoText: null });
+  assert.equal(saveCount, 3);
+});
+
 test('createSessionCommandActions.setProvider restores preserved provider-scoped session state', () => {
   let saveCount = 0;
   const actions = createSessionCommandActions({

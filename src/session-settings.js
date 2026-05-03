@@ -1,3 +1,9 @@
+import {
+  DEFAULT_EXTRA_INFO_TEMPLATE,
+  normalizeExtraInfoEnabled,
+  normalizeExtraInfoTemplate,
+} from './extra-info.js';
+
 export function parseUiLanguageInput(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
@@ -264,6 +270,38 @@ export function parseCompactConfigFromText(arg = '') {
   return parseCompactConfigAction(parts[0], parts.slice(1).join(' '));
 }
 
+export function parseExtraInfoConfigAction(key, value = '') {
+  const normalizedKey = String(key || '').trim().toLowerCase();
+  const normalizedValue = String(value || '').trim();
+
+  if (!normalizedKey || normalizedKey === 'status') return { type: 'status' };
+  if (['on', 'off', 'enabled'].includes(normalizedKey)) {
+    const raw = normalizedKey === 'enabled' ? normalizedValue : normalizedKey;
+    const enabled = normalizeExtraInfoEnabled(raw);
+    if (enabled === null) return { type: 'invalid' };
+    return { type: 'set_enabled', enabled };
+  }
+  if (['default', 'reset', 'inherit', 'clear', '跟随默认', '清除'].includes(normalizedKey)) {
+    return { type: 'reset' };
+  }
+  if (['text', 'content', 'template'].includes(normalizedKey)) {
+    if (['default', 'reset', 'inherit', 'clear', '跟随默认', '清除'].includes(normalizedValue.toLowerCase())) {
+      return { type: 'set_text', text: null };
+    }
+    const text = normalizeExtraInfoTemplate(normalizedValue);
+    if (!text) return { type: 'invalid' };
+    return { type: 'set_text', text };
+  }
+  return { type: 'invalid' };
+}
+
+export function parseExtraInfoConfigFromText(arg = '') {
+  const text = String(arg || '').trim();
+  if (!text) return { type: 'status' };
+  const [key, ...rest] = text.split(/\s+/);
+  return parseExtraInfoConfigAction(key, rest.join(' '));
+}
+
 export function parseReasoningEffortInput(value, { allowDefault = false } = {}) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return null;
@@ -296,6 +334,8 @@ export function createSessionSettings({
   modelAutoCompactTokenLimit = maxInputTokensBeforeCompact,
   defaultReplyDeliveryMode = 'card_mention',
   readDefaultReplyDeliveryMode = () => defaultReplyDeliveryMode,
+  defaultExtraInfoEnabled = true,
+  defaultExtraInfoText = DEFAULT_EXTRA_INFO_TEMPLATE,
   defaultCodexProfile = null,
   readDefaultCodexProfile = () => ({ profile: defaultCodexProfile, source: 'env default' }),
   defaultModel = null,
@@ -666,6 +706,32 @@ export function createSessionSettings({
     };
   }
 
+  function resolveExtraInfoSetting(session) {
+    const sessionEnabled = normalizeExtraInfoEnabled(session?.extraInfoEnabled);
+    const parentSession = resolveParentSession(session);
+    const parentEnabled = normalizeExtraInfoEnabled(parentSession?.extraInfoEnabled);
+    const enabled = sessionEnabled !== null
+      ? { enabled: sessionEnabled, source: 'session override' }
+      : parentEnabled !== null
+        ? { enabled: parentEnabled, source: 'parent channel' }
+        : { enabled: Boolean(defaultExtraInfoEnabled), source: 'env default' };
+
+    const sessionText = normalizeExtraInfoTemplate(session?.extraInfoText);
+    const parentText = normalizeExtraInfoTemplate(parentSession?.extraInfoText);
+    const text = sessionText
+      ? { text: sessionText, source: 'session override' }
+      : parentText
+        ? { text: parentText, source: 'parent channel' }
+        : { text: normalizeExtraInfoTemplate(defaultExtraInfoText) || DEFAULT_EXTRA_INFO_TEMPLATE, source: 'env default' };
+
+    return {
+      enabled: enabled.enabled,
+      enabledSource: enabled.source,
+      text: text.text,
+      textSource: text.source,
+    };
+  }
+
   function resolveNativeCompactTokenLimitSetting(session) {
     const provider = normalizeProvider(session?.provider);
     const direct = normalizeSessionCompactTokenLimit(session?.nativeCompactTokenLimit);
@@ -745,6 +811,7 @@ export function createSessionSettings({
     resolveCompactThresholdSetting,
     resolveNativeCompactTokenLimitSetting,
     resolveReplyDeliverySetting,
+    resolveExtraInfoSetting,
     getProviderDefaults,
   };
 }

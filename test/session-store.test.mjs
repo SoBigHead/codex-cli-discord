@@ -74,6 +74,8 @@ test('createSessionStore keeps legacy fallback for fresh thread when no default 
   const workspaceDir = store.ensureWorkspace(session, 'thread-1');
 
   assert.equal(session.provider, 'claude');
+  assert.equal(session.extraInfoEnabled, null);
+  assert.equal(session.extraInfoText, null);
   assert.equal(workspaceDir, path.join(workspaceRoot, 'thread-1'));
   assert.equal(session.workspaceDir, null);
   assert.equal(fs.existsSync(workspaceDir), true);

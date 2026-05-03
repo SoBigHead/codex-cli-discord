@@ -15,6 +15,7 @@ import {
   normalizeUiLanguage,
   parseCompactConfigAction,
   parseCompactConfigFromText,
+  parseExtraInfoConfigFromText,
   parseFastModeAction,
   parseRuntimeModeAction,
   parseReasoningEffortInput,
@@ -405,6 +406,44 @@ test('session-settings resolves reply delivery from session, parent channel, and
     mode: 'card_mention',
     source: 'env default',
   });
+});
+
+test('session-settings resolves and parses extra info config', () => {
+  const parent = {
+    extraInfoEnabled: false,
+    extraInfoText: 'parent {thread}',
+  };
+  const settings = createSessionSettings({
+    defaultExtraInfoEnabled: true,
+    defaultExtraInfoText: 'default {thread}',
+    getParentSession: (session) => (session?.parentChannelId ? parent : null),
+  });
+
+  assert.deepEqual(settings.resolveExtraInfoSetting({}), {
+    enabled: true,
+    enabledSource: 'env default',
+    text: 'default {thread}',
+    textSource: 'env default',
+  });
+  assert.deepEqual(settings.resolveExtraInfoSetting({ parentChannelId: 'parent-1' }), {
+    enabled: false,
+    enabledSource: 'parent channel',
+    text: 'parent {thread}',
+    textSource: 'parent channel',
+  });
+  assert.deepEqual(settings.resolveExtraInfoSetting({
+    parentChannelId: 'parent-1',
+    extraInfoEnabled: true,
+    extraInfoText: 'local {msg}',
+  }), {
+    enabled: true,
+    enabledSource: 'session override',
+    text: 'local {msg}',
+    textSource: 'session override',
+  });
+  assert.deepEqual(parseExtraInfoConfigFromText('off'), { type: 'set_enabled', enabled: false });
+  assert.deepEqual(parseExtraInfoConfigFromText('text hi {thread}'), { type: 'set_text', text: 'hi {thread}' });
+  assert.deepEqual(parseExtraInfoConfigFromText('default'), { type: 'reset' });
 });
 
 test('session-settings parses compact, reasoning and workspace command inputs', () => {

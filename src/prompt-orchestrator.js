@@ -1,9 +1,22 @@
 import { createPromptResultRenderer } from './prompt-result-renderer.js';
 import { buildNativeImagePromptNote, stageNativeImageAttachments } from './native-image-inputs.js';
 import { withRetryAction } from './retry-action-button.js';
+import {
+  buildExtraInfoPromptLine,
+  DEFAULT_EXTRA_INFO_TEMPLATE,
+  renderExtraInfoTemplate,
+} from './extra-info.js';
 
 function defaultSleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function buildDiscordBridgePromptLine({ message = null, key = '' } = {}) {
+  return renderExtraInfoTemplate(DEFAULT_EXTRA_INFO_TEMPLATE, {
+    thread: String(message?.channel?.id || key || '').trim(),
+    parent: String(message?.channel?.parentId || '').trim(),
+    msg: String(message?.id || '').trim(),
+  });
 }
 
 export function createPromptOrchestrator({
@@ -33,6 +46,7 @@ export function createPromptOrchestrator({
   resolveCompactEnabledSetting,
   resolveCompactThresholdSetting,
   resolveReplyDeliverySetting = () => ({ mode: 'card_mention', source: 'env default' }),
+  resolveExtraInfoSetting = () => ({ enabled: true, text: DEFAULT_EXTRA_INFO_TEMPLATE }),
   formatWorkspaceBusyReport,
   buildWorkspaceBusyPayload = ({ session, workspaceDir, owner }) => ({
     content: formatWorkspaceBusyReport(session, workspaceDir, owner),
@@ -355,6 +369,12 @@ export function createPromptOrchestrator({
           : `已获取 workspace 锁：${workspaceDir}`,
       );
 
+      const extraInfoPromptLine = buildExtraInfoPromptLine({
+        setting: resolveExtraInfoSetting(session),
+        message,
+        key,
+      });
+      const extraInfoSystemPrompt = extraInfoPromptLine;
       let promptToRun = prompt;
       const nativeCompactAutoContinueActive = shouldAutoContinueNativeCompact(session);
 
@@ -378,6 +398,7 @@ export function createPromptOrchestrator({
         sessionKey: key,
         workspaceDir,
         prompt: promptText,
+        systemPrompt: extraInfoSystemPrompt,
         inputImages: nativeInputs.inputImages,
         onSpawn: (child) => {
           setActiveRun(channelState, message, promptText, child, phase);

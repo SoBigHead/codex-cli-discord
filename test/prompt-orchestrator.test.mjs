@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { createPromptOrchestrator } from '../src/prompt-orchestrator.js';
+import { buildDiscordBridgePromptLine, createPromptOrchestrator } from '../src/prompt-orchestrator.js';
 
 function createOrchestrator(overrides = {}) {
   const replyLog = [];
@@ -184,6 +184,115 @@ test('createPromptOrchestrator.handlePrompt runs task updates session and replie
     type: 'finish',
     outcome: { ok: true, cancelled: false, timedOut: false, error: '' },
   });
+});
+
+test('buildDiscordBridgePromptLine keeps Discord context compact', () => {
+  const line = buildDiscordBridgePromptLine({
+    key: 'fallback-channel',
+    message: {
+      id: 'msg-1',
+      channel: {
+        id: 'thread-1',
+        parentId: 'parent-1',
+      },
+    },
+  });
+
+  assert.equal(line, '[Via agents-in-discord; discord_thread=thread-1; parent=parent-1; msg=msg-1]');
+});
+
+test('createPromptOrchestrator.handlePrompt sends Discord bridge context as system prompt', async () => {
+  const runTaskPrompts = [];
+  const runTaskSystemPrompts = [];
+  const harness = createOrchestrator({
+    runTask: async (options) => {
+      runTaskPrompts.push(options.prompt);
+      runTaskSystemPrompts.push(options.systemPrompt);
+      options.onSpawn?.({ pid: 789 });
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: ['done'],
+        finalAnswerMessages: ['final answer'],
+        threadId: 'sess-1',
+        usage: { input_tokens: 111 },
+      };
+    },
+  });
+  const { orchestrator } = harness;
+  const message = {
+    id: 'msg-bridge',
+    channel: {
+      id: 'thread-bridge',
+      parentId: 'parent-channel',
+      async sendTyping() {},
+      async send() {},
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.handlePrompt(message, 'thread-bridge', 'do work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.deepEqual(runTaskPrompts, ['do work']);
+  assert.deepEqual(runTaskSystemPrompts, [
+    '[Via agents-in-discord; discord_thread=thread-bridge; parent=parent-channel; msg=msg-bridge]',
+  ]);
+});
+
+test('createPromptOrchestrator.handlePrompt can disable or customize extra info', async () => {
+  const prompts = [];
+  const systemPrompts = [];
+  const harness = createOrchestrator({
+    resolveExtraInfoSetting: (currentSession) => currentSession.extraInfoSetting,
+    runTask: async (options) => {
+      prompts.push(options.prompt);
+      systemPrompts.push(options.systemPrompt);
+      options.onSpawn?.({ pid: 790 });
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: ['done'],
+        finalAnswerMessages: ['final answer'],
+        threadId: 'sess-1',
+        usage: { input_tokens: 111 },
+      };
+    },
+  });
+  const { session, orchestrator } = harness;
+  const message = {
+    id: 'msg-extra',
+    channel: {
+      id: 'thread-extra',
+      async sendTyping() {},
+      async send() {},
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  session.extraInfoSetting = { enabled: false, text: '[X {thread}]' };
+  await orchestrator.handlePrompt(message, 'thread-extra', 'plain', channelState);
+  session.extraInfoSetting = { enabled: true, text: '[X {thread} {msg}]' };
+  await orchestrator.handlePrompt(message, 'thread-extra', 'custom', channelState);
+
+  assert.deepEqual(prompts, [
+    'plain',
+    'custom',
+  ]);
+  assert.deepEqual(systemPrompts, [
+    '',
+    '[X thread-extra msg-extra]',
+  ]);
 });
 
 test('createPromptOrchestrator.handlePrompt stages native codex images and cleans them up', async () => {
