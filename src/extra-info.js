@@ -1,4 +1,5 @@
-export const DEFAULT_EXTRA_INFO_TEMPLATE = '[Via agents-in-discord; discord_thread={thread}; parent={parent}; msg={msg}]';
+export const DEFAULT_EXTRA_INFO_TEMPLATE = '[Via agents-in-discord; discord_thread={thread}; parent={parent}]';
+const PER_MESSAGE_PLACEHOLDER_RE = /\{(?:msg|message|message_id)\}/i;
 
 export function normalizeExtraInfoTemplate(value) {
   const text = String(value ?? '').trim();
@@ -27,8 +28,12 @@ function renderDefaultExtraInfoLine(values) {
   const parts = ['Via agents-in-discord'];
   if (values.thread) parts.push(`discord_thread=${values.thread}`);
   if (values.parent) parts.push(`parent=${values.parent}`);
-  if (values.msg) parts.push(`msg=${values.msg}`);
   return `[${parts.join('; ')}]`;
+}
+
+export function extraInfoTemplateUsesPerMessageData(template) {
+  const normalized = normalizeExtraInfoTemplate(template) || DEFAULT_EXTRA_INFO_TEMPLATE;
+  return PER_MESSAGE_PLACEHOLDER_RE.test(normalized);
 }
 
 export function renderExtraInfoTemplate(template, values = {}) {

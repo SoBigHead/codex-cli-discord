@@ -880,13 +880,13 @@ export function createReportFormatters({
       return [
         'Usage: `!extra_info <status|on|off|text|default> [value]`',
         `Slash: \`${slashRef('extra_info')} key:<...> value:<...>\``,
-        'Placeholders: `{thread}`, `{parent}`, `{msg}`',
+        'Cache-friendly placeholders: `{thread}`, `{parent}`. `{msg}` is per-message and stays out of system context.',
       ].join('\n');
     }
     return [
       '用法：`!extra_info <status|on|off|text|default> [value]`',
       `Slash：\`${slashRef('extra_info')} key:<...> value:<...>\``,
-      '占位符：`{thread}`、`{parent}`、`{msg}`',
+      '缓存友好的占位符：`{thread}`、`{parent}`。`{msg}` 每条消息都变，不进系统上下文。',
     ].join('\n');
   }
 

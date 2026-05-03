@@ -270,7 +270,7 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
               { name: 'text', value: 'text' },
               { name: 'default', value: 'default' },
             ))
-          .addStringOption(o => o.setName('value').setDescription('text 的内容，可用 {thread} {parent} {msg}').setRequired(false));
+          .addStringOption(o => o.setName('value').setDescription('text 内容；优先用 {thread} {parent}，{msg} 会按消息变化').setRequired(false));
       },
     },
     {

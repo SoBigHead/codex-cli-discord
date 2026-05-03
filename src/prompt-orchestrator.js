@@ -4,6 +4,7 @@ import { withRetryAction } from './retry-action-button.js';
 import {
   buildExtraInfoPromptLine,
   DEFAULT_EXTRA_INFO_TEMPLATE,
+  extraInfoTemplateUsesPerMessageData,
   renderExtraInfoTemplate,
 } from './extra-info.js';
 
@@ -369,12 +370,19 @@ export function createPromptOrchestrator({
           : `已获取 workspace 锁：${workspaceDir}`,
       );
 
+      const extraInfoSetting = resolveExtraInfoSetting(session);
       const extraInfoPromptLine = buildExtraInfoPromptLine({
-        setting: resolveExtraInfoSetting(session),
+        setting: extraInfoSetting,
         message,
         key,
       });
-      const extraInfoSystemPrompt = extraInfoPromptLine;
+      const extraInfoUsesPerMessageData = extraInfoTemplateUsesPerMessageData(
+        extraInfoSetting?.text || extraInfoSetting?.template,
+      );
+      const extraInfoSystemPrompt = extraInfoUsesPerMessageData ? '' : extraInfoPromptLine;
+      const extraInfoPromptSuffix = extraInfoUsesPerMessageData && extraInfoPromptLine
+        ? `\n\n${extraInfoPromptLine}`
+        : '';
       let promptToRun = prompt;
       const nativeCompactAutoContinueActive = shouldAutoContinueNativeCompact(session);
 
@@ -391,6 +399,9 @@ export function createPromptOrchestrator({
       });
       if (nativeInputs.promptNote) {
         promptToRun = `${promptToRun}\n\n${nativeInputs.promptNote}`;
+      }
+      if (extraInfoPromptSuffix) {
+        promptToRun = `${promptToRun}${extraInfoPromptSuffix}`;
       }
 
       const runPromptAttempt = async ({ promptText, phase }) => runTask({
@@ -457,7 +468,7 @@ export function createPromptOrchestrator({
         }
 
         result = await runPromptAttempt({
-          promptText: prompt,
+          promptText: promptToRun,
           phase: 'retry',
         });
         attemptNumber = nextAttempt;
