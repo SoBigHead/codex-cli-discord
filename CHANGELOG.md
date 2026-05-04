@@ -6,6 +6,11 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.8] - 2026-05-04
+
+### Fixed
+- Stopped Codex goal continuation runs when the official goal state becomes complete, so Discord progress cards finish instead of waiting for a hung `codex exec` process.
+
 ## [0.12.7] - 2026-05-04
 
 ### Added
