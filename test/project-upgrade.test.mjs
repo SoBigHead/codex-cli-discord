@@ -115,6 +115,83 @@ test('project upgrade apply refuses dirty worktrees', async () => {
   assert.equal(JSON.parse(fs.readFileSync(path.join(local, 'package.json'), 'utf8')).version, '0.1.0');
 });
 
+test('project upgrade validates in a temporary worktree before touching the main worktree', async () => {
+  const { local } = createUpgradeFixture();
+  const manager = createProjectUpgradeManager({
+    projectRoot: local,
+    env: { ...process.env },
+    verifyCommand: 'off',
+    installCommand: 'node -e "process.exit(3)"',
+  });
+
+  const result = await manager.apply();
+  assert.equal(result.ok, false);
+  assert.equal(result.changed, false);
+  assert.match(result.error, /exited 3/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(local, 'package.json'), 'utf8')).version, '0.1.0');
+});
+
+test('project upgrade status cache avoids repeated fetches until refreshed', async () => {
+  let fetches = 0;
+  const manager = createProjectUpgradeManager({
+    projectRoot: '/',
+    env: { ...process.env },
+    cacheTtlMs: 60_000,
+    spawnSyncFn: (cmd, args) => {
+      if (cmd === 'git' && args.join(' ') === 'rev-parse --is-inside-work-tree') {
+        return { status: 0, stdout: 'true\n', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'fetch') {
+        fetches += 1;
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (cmd === 'git' && args.join(' ') === 'rev-parse HEAD') {
+        return { status: 0, stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n', stderr: '' };
+      }
+      if (cmd === 'git' && args.join(' ') === 'rev-parse origin/main') {
+        return { status: 0, stdout: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n', stderr: '' };
+      }
+      if (cmd === 'git' && args.join(' ') === 'branch --show-current') {
+        return { status: 0, stdout: 'main\n', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'status') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'rev-list') {
+        return { status: 0, stdout: '0\n', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'merge-base') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (cmd === 'git' && args[0] === 'show') {
+        return { status: 0, stdout: '{"version":"0.1.0"}\n', stderr: '' };
+      }
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+
+  await manager.getCachedStatus();
+  await manager.getCachedStatus();
+  await manager.getCachedStatus({ refresh: true });
+  assert.equal(fetches, 2);
+});
+
+test('project upgrade apply dry-run reports planned work without changing the worktree', async () => {
+  const { local } = createUpgradeFixture();
+  const manager = createProjectUpgradeManager({
+    projectRoot: local,
+    env: { ...process.env },
+    verifyCommand: 'off',
+    installCommand: 'node -e ""',
+  });
+
+  const result = await manager.apply({ dryRun: true });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, false);
+  assert.match(result.logs.join('\n'), /temporary worktree/);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(local, 'package.json'), 'utf8')).version, '0.1.0');
+});
+
 test('project upgrade apply fast-forwards and persists mode changes', async () => {
   const { local } = createUpgradeFixture();
   const envFile = path.join(local, '.env');
@@ -199,5 +276,97 @@ test('project upgrade scheduler notifies once and blocks auto upgrade while work
     requestRestart: () => { restartCalls += 1; },
   });
   await busyScheduler.tick();
+  assert.equal(applyCalls, 1);
+});
+
+test('project upgrade scheduler retries notices after send failures', async () => {
+  let attempts = 0;
+  const update = {
+    ok: true,
+    config: { mode: 'notify' },
+    localVersion: '0.1.0',
+    remoteVersion: '0.1.1',
+    localShort: 'aaaaaaa',
+    remoteShort: 'bbbbbbb',
+    remoteHead: 'bbbbbbb111',
+    behindCount: 1,
+    aheadCount: 0,
+    updateAvailable: true,
+    canApply: true,
+    reasons: [],
+    releaseNotes: '',
+  };
+  const manager = {
+    resolveConfig: () => update.config,
+    check: async () => update,
+    apply: async () => ({ ok: true, changed: true, check: update }),
+  };
+  const client = {
+    channels: {
+      fetch: async () => ({
+        send: async () => {
+          attempts += 1;
+          throw new Error('discord unavailable');
+        },
+      }),
+    },
+  };
+  const scheduler = createProjectUpgradeScheduler({
+    manager,
+    notifyChannelIds: ['channel-1'],
+    getClient: () => client,
+    getRuntimeSnapshots: () => [],
+    stateFile: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aid-upgrade-state-')), 'state.json'),
+    logger: { warn: () => {} },
+  });
+
+  await scheduler.tick();
+  await scheduler.tick();
+
+  assert.equal(attempts, 2);
+});
+
+test('project upgrade scheduler blocks auto upgrade on fresh peer heartbeat only', async () => {
+  let applyCalls = 0;
+  const heartbeatDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aid-upgrade-heartbeat-'));
+  const heartbeatPath = path.join(heartbeatDir, 'claude.json');
+  const update = {
+    ok: true,
+    config: { mode: 'auto' },
+    localVersion: '0.1.0',
+    remoteVersion: '0.1.1',
+    localShort: 'aaaaaaa',
+    remoteShort: 'bbbbbbb',
+    remoteHead: 'bbbbbbb111',
+    behindCount: 1,
+    aheadCount: 0,
+    updateAvailable: true,
+    canApply: true,
+    reasons: [],
+    releaseNotes: '',
+  };
+  const manager = {
+    resolveConfig: () => update.config,
+    check: async () => update,
+    apply: async () => {
+      applyCalls += 1;
+      return { ok: true, changed: true, check: update };
+    },
+  };
+  const scheduler = createProjectUpgradeScheduler({
+    manager,
+    notifyChannelIds: [],
+    getRuntimeSnapshots: () => [],
+    requestRestart: () => {},
+    heartbeatDir,
+    heartbeatMaxAgeMs: 1_000,
+  });
+
+  fs.writeFileSync(heartbeatPath, JSON.stringify({ id: 'claude', busy: true, updatedAt: Date.now() }), 'utf8');
+  await scheduler.tick();
+  assert.equal(applyCalls, 0);
+
+  fs.writeFileSync(heartbeatPath, JSON.stringify({ id: 'claude', busy: true, updatedAt: Date.now() - 5_000 }), 'utf8');
+  await scheduler.tick();
   assert.equal(applyCalls, 1);
 });
