@@ -16,6 +16,10 @@ import {
   parseCodexGoalSlashInput,
   shouldStartCodexGoalContinuation,
 } from './codex-goal-flow.js';
+import {
+  formatProjectUpgradeReport,
+  parseProjectUpgradeSlashInput,
+} from './project-upgrade.js';
 
 const ACTION_BUTTON_PREFIX = 'cmd';
 const ACTION_BUTTON_COMMANDS = new Set(getActionButtonCommandNames());
@@ -136,6 +140,10 @@ export function createSlashCommandRouter({
   parseTimeoutConfigAction,
   parseCompactConfigAction,
   parseExtraInfoConfigAction = () => ({ type: 'status' }),
+  getProjectUpgradeStatus = async () => ({ ok: false, error: 'project upgrade unavailable' }),
+  setProjectUpgradeMode = null,
+  applyProjectUpgrade = null,
+  requestProjectUpgradeRestart = null,
   providerSupportsCompactConfigAction = () => true,
   cancelChannelWork,
   closeRuntimeSession = () => false,
@@ -687,6 +695,44 @@ export function createSlashCommandRouter({
   registerSlashHandlers(handlers, ['queue'], async ({ interaction, key, session, respond }) => {
     await respond({
       content: formatQueueReport(key, session, interaction.channel),
+      flags: 64,
+    });
+  });
+
+  registerSlashHandlers(handlers, ['upgrade'], async ({ interaction, session, respond }) => {
+    const language = getSessionLanguage(session);
+    const action = parseProjectUpgradeSlashInput({
+      action: interaction.options.getString('action') || 'status',
+      mode: interaction.options.getString('mode') || '',
+    });
+    if (action.type === 'set_mode') {
+      if (typeof setProjectUpgradeMode !== 'function') {
+        await respond({ content: '❌ 当前环境未启用项目升级设置。', flags: 64 });
+        return;
+      }
+      await respond({
+        content: formatProjectUpgradeReport(null, language, { changedMode: setProjectUpgradeMode(action.mode) }),
+        flags: 64,
+      });
+      return;
+    }
+    if (action.type === 'apply') {
+      if (typeof applyProjectUpgrade !== 'function') {
+        await respond({ content: '❌ 当前环境未启用项目升级。', flags: 64 });
+        return;
+      }
+      const result = await applyProjectUpgrade();
+      await respond({
+        content: formatProjectUpgradeReport(null, language, { applyResult: result }),
+        flags: 64,
+      });
+      if (result?.ok && result.changed && typeof requestProjectUpgradeRestart === 'function') {
+        setTimeout(() => requestProjectUpgradeRestart(), 750);
+      }
+      return;
+    }
+    await respond({
+      content: formatProjectUpgradeReport(await getProjectUpgradeStatus({ fetch: true }), language),
       flags: 64,
     });
   });

@@ -7,6 +7,7 @@ import {
   DEFAULT_EXTRA_INFO_TEMPLATE,
   estimatePromptTokenCount,
 } from './extra-info.js';
+import { formatProjectUpgradeStatusLine } from './project-upgrade.js';
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
 
@@ -56,6 +57,7 @@ export function createReportFormatters({
   resolveCompactThresholdSetting = () => ({ tokens: 0, source: 'env default' }),
   resolveNativeCompactTokenLimitSetting = () => ({ tokens: 0, source: 'env default' }),
   getProviderRateLimits = async () => null,
+  getProjectUpgradeStatus = async () => null,
   getSessionId = (session) => session?.runnerSessionId || session?.codexThreadId || null,
   getCodexThreadGoal = async () => null,
   getWorkspaceBinding = () => ({
@@ -515,7 +517,7 @@ export function createReportFormatters({
       : `• 额外信息：off（${enabledSource}），0 tokens`;
   }
 
-  function formatStatusReport(key, session, channel = null, { rateLimitReport = null, goalReport = null } = {}) {
+  function formatStatusReport(key, session, channel = null, { rateLimitReport = null, goalReport = null, projectUpgradeReport = null } = {}) {
     const language = getSessionLanguage(session);
     const lang = normalizeUiLanguage(language);
     const provider = getSessionProvider(session);
@@ -545,6 +547,7 @@ export function createReportFormatters({
     const nativeCompact = formatNativeCompactSetting(provider, nativeLimit, lang);
     const rateLimitLines = formatCodexRateLimitLines(provider, rateLimitReport, lang);
     const goalLines = formatCodexGoalLines(provider, goalReport, lang);
+    const projectUpgradeLine = projectUpgradeReport ? formatProjectUpgradeStatusLine(projectUpgradeReport, lang) : null;
 
     if (lang === 'en') {
       return [
@@ -570,6 +573,7 @@ export function createReportFormatters({
         `• cli: ${formatCliHealth(cliHealth, lang)}`,
         ...rateLimitLines,
         ...goalLines,
+        projectUpgradeLine,
         `• ${sessionFieldLabel}: ${formatSessionStatusLabel(session)}`,
         formatForkParentLine(session, lang),
         `• last run input tokens: ${formatTokenValue(session?.lastInputTokens)}`,
@@ -600,6 +604,7 @@ export function createReportFormatters({
       `• CLI: ${formatCliHealth(cliHealth, lang)}`,
       ...rateLimitLines,
       ...goalLines,
+      projectUpgradeLine,
       `• ${sessionFieldLabel}: ${formatSessionStatusLabel(session)}`,
       formatForkParentLine(session, lang),
       `• 上一轮输入 tokens: ${formatTokenValue(session?.lastInputTokens)}`,
@@ -611,6 +616,7 @@ export function createReportFormatters({
     const provider = getSessionProvider(session);
     let rateLimitReport = null;
     let goalReport = null;
+    let projectUpgradeReport = null;
     if (provider === 'codex') {
       const threadId = String(getSessionId(session) || '').trim();
       const [rateLimitResult, goalResult] = await Promise.allSettled([
@@ -636,7 +642,12 @@ export function createReportFormatters({
         };
       }
     }
-    return formatStatusReport(key, session, channel, { rateLimitReport, goalReport });
+    try {
+      projectUpgradeReport = await getProjectUpgradeStatus();
+    } catch (err) {
+      projectUpgradeReport = { ok: false, error: String(err?.message || err || 'unknown error') };
+    }
+    return formatStatusReport(key, session, channel, { rateLimitReport, goalReport, projectUpgradeReport });
   }
 
   function formatQueueReport(key, session = null, channel = null) {
@@ -1126,6 +1137,7 @@ export function createReportFormatters({
         '• `!status` — current config snapshot',
         `• \`${slashRef('settings')}\` — interactive channel settings panel`,
         '• `!queue` — queue status in current channel',
+        `• \`${slashRef('upgrade')} action:<status|apply|mode>\` / \`!upgrade <status|apply|off|notify|auto>\` — check or apply project updates; default mode is notify only`,
         '• `!doctor` — runtime + security diagnostics',
         `• \`${slashRef('onboarding')}\` — interactive onboarding`,
         '• `!onboarding` — onboarding text checklist',
@@ -1184,6 +1196,7 @@ export function createReportFormatters({
       '• `!status` — 当前配置一览',
       `• \`${slashRef('settings')}\` — 当前频道的交互式设置面板`,
       '• `!queue` — 查看当前频道队列（运行中/排队数）',
+      `• \`${slashRef('upgrade')} action:<status|apply|mode>\` / \`!upgrade <status|apply|off|notify|auto>\` — 检查或升级项目本体；默认只提示`,
       '• `!doctor` — 查看 bot 健康状态与当前安全策略',
       `• \`${slashRef('onboarding')}\` — 交互式引导（按钮分步）`,
       '• `!onboarding` — 文本版引导流程与检查清单',

@@ -333,6 +333,25 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
       description: '查看当前频道的任务队列状态',
     },
     {
+      name: 'upgrade',
+      description: '检查或升级 agents-in-discord 项目本体',
+      configure(builder) {
+        return builder
+          .addStringOption(o => o.setName('action').setDescription('升级操作').setRequired(true)
+            .addChoices(
+              { name: 'status 检查远端版本', value: 'status' },
+              { name: 'apply 执行安全升级', value: 'apply' },
+              { name: 'mode 设置升级模式', value: 'mode' },
+            ))
+          .addStringOption(o => o.setName('mode').setDescription('mode 可选 off / notify / auto；默认 notify').setRequired(false)
+            .addChoices(
+              { name: 'off 关闭检查', value: 'off' },
+              { name: 'notify 只提示', value: 'notify' },
+              { name: 'auto 自动升级', value: 'auto' },
+            ));
+      },
+    },
+    {
       name: 'doctor',
       description: '查看 bot 运行与安全配置体检',
     },

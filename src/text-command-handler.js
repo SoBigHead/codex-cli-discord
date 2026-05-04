@@ -17,6 +17,10 @@ import {
   parseCodexGoalTextInput,
   shouldStartCodexGoalContinuation,
 } from './codex-goal-flow.js';
+import {
+  formatProjectUpgradeReport,
+  parseProjectUpgradeTextInput,
+} from './project-upgrade.js';
 
 function isExistingDirectory(dir) {
   try {
@@ -89,6 +93,10 @@ export function createTextCommandHandler({
   parseTimeoutConfigAction,
   parseCompactConfigFromText,
   parseExtraInfoConfigFromText,
+  getProjectUpgradeStatus = async () => ({ ok: false, error: 'project upgrade unavailable' }),
+  setProjectUpgradeMode = null,
+  applyProjectUpgrade = null,
+  requestProjectUpgradeRestart = null,
   parseConfigKey,
   parseReasoningEffortInput,
   getEffectiveSecurityProfile,
@@ -177,6 +185,37 @@ export function createTextCommandHandler({
 
       case 'queue': {
         await safeReply(message, formatQueueReport(key, session, message.channel));
+        break;
+      }
+
+      case 'upgrade': {
+        const language = getSessionLanguage(session);
+        const action = parseProjectUpgradeTextInput(arg);
+        if (action.type === 'set_mode') {
+          if (typeof setProjectUpgradeMode !== 'function') {
+            await safeReply(message, '❌ 当前环境未启用项目升级设置。');
+            break;
+          }
+          await safeReply(message, formatProjectUpgradeReport(null, language, { changedMode: setProjectUpgradeMode(action.mode) }));
+          break;
+        }
+        if (action.type === 'apply') {
+          if (typeof applyProjectUpgrade !== 'function') {
+            await safeReply(message, '❌ 当前环境未启用项目升级。');
+            break;
+          }
+          const result = await applyProjectUpgrade();
+          await safeReply(message, formatProjectUpgradeReport(null, language, { applyResult: result }));
+          if (result?.ok && result.changed && typeof requestProjectUpgradeRestart === 'function') {
+            setTimeout(() => requestProjectUpgradeRestart(), 750);
+          }
+          break;
+        }
+        if (action.type === 'help') {
+          await safeReply(message, '用法：`!upgrade <status|apply|off|notify|auto>`');
+          break;
+        }
+        await safeReply(message, formatProjectUpgradeReport(await getProjectUpgradeStatus({ fetch: true }), language));
         break;
       }
 
