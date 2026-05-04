@@ -6,6 +6,8 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.7] - 2026-05-04
+
 ### Added
 - Added fork-origin notices in new Discord fork threads that mention the requester and identify the parent session.
 - Added a runtime and busy-prompt modes spec plus channel settings/status output for effective queue-vs-steer behavior.
