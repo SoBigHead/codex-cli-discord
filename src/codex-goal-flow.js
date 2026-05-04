@@ -215,8 +215,8 @@ function formatGoalRunHint(goal, language, continuation = null) {
         : `运行状态：active，但自动续跑没有排进去（${continuation.reason || '入队失败'}）。`;
     }
     return language === 'en'
-      ? 'Run state: active means Codex should continue when the runner is idle. Use progress or queue to see actual execution.'
-      : '运行状态：active 表示 Codex 会在 runner 空闲时续跑。看实际执行用 progress 或 queue。';
+      ? 'Run state: active; Codex should continue until it marks the goal complete or reports a blocker.'
+      : '运行状态：active；Codex 应继续推进，直到把 goal 标为已完成，或明确报告阻塞。';
   }
   if (status === 'paused') {
     return language === 'en'

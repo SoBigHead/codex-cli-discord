@@ -347,12 +347,12 @@ export function createReportFormatters({
     if (language === 'en') {
       return [
         `• Codex goal: ${formatCodexGoalStatus(goal.status, language)}; objective: ${objective}; budget: ${formatCodexGoalBudget(goal, language)}`,
-        '• Codex goal run state: active goals continue when the runner is idle; use progress or queue to see actual execution',
+        '• Codex goal run state: active goals should continue until the runner marks them complete or reports a blocker',
       ];
     }
     return [
       `• Codex goal: ${formatCodexGoalStatus(goal.status, language)}；目标：${objective}；预算：${formatCodexGoalBudget(goal, language)}`,
-      '• Codex goal 运行状态: active goal 会在 runner 空闲时续跑；看实际执行用 progress 或 queue',
+      '• Codex goal 运行状态: active goal 应继续推进，直到 runner 标记完成或报告阻塞',
     ];
   }
 
@@ -1142,7 +1142,7 @@ export function createReportFormatters({
         '• `!sessions` — list recent provider sessions from the native runtime store',
         sessionsAlias ? `• current provider alias: \`!${sessionsAlias}\`` : null,
         (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — create a native ${getProviderDisplayName(provider)} fork in a new Discord thread` : null,
-        provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; active goals continue when the runner is idle` : null,
+        provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <status|objective|pause|resume|done|clear>\` — manage the current Codex goal; active goals continue until marked complete or blocked` : null,
         !botProvider ? '• `!provider <codex|claude|gemini|status>` — switch provider for current channel' : null,
         '',
         '**Workspace**',
@@ -1200,7 +1200,7 @@ export function createReportFormatters({
       '• `!sessions` — 从 provider 原生运行时存储里列出最近的 sessions',
       sessionsAlias ? `• 当前 provider 别名：\`!${sessionsAlias}\`` : null,
       (provider === 'codex' || provider === 'claude') ? `• \`${slashRef('fork')} [name]\` / \`!fork [name]\` — 用 ${getProviderDisplayName(provider)} 原生 fork 创建新 Discord thread` : null,
-      provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；active 时会在空闲后续跑` : null,
+      provider === 'codex' ? `• \`${slashRef('goal')} action:<status|set|pause|resume|done|clear|budget>\` / \`!goal <状态|目标|暂停|恢复|完成|清除>\` — 管理当前 Codex goal；active 时应持续推进直到标记完成或报告阻塞` : null,
       !botProvider ? '• `!provider <codex|claude|gemini|status>` — 切换当前频道 provider' : null,
       '',
       '**工作目录**',

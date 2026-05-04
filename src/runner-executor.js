@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createRunnerArgsBuilder, uniqueDirs } from './runner-args.js';
 import { createClaudeLongRunner } from './claude-long-runner.js';
+import { CODEX_GOAL_CONTINUATION_PROMPT } from './codex-goal-flow.js';
 import {
   createRunnerEventParser,
 } from './runner-event-handlers.js';
@@ -37,6 +38,9 @@ export function createRunnerExecutor({
   extractAgentMessageText,
   isFinalAnswerLikeAgentMessage,
   readGeminiSessionState = () => null,
+  getCodexThreadGoal = null,
+  codexGoalMonitorIntervalMs = 2000,
+  spawnFn = spawn,
   claudeLongIdleMs = 15 * 60_000,
   claudeLongMaxSessions = 8,
   createClaudeLongRunnerFn = createClaudeLongRunner,
@@ -129,6 +133,7 @@ export function createRunnerExecutor({
       onEvent,
       onLog,
       timeoutMs,
+      goalMonitor: createCodexGoalMonitor({ provider, session, prompt }),
     });
     const normalizedResult = normalizeProvider(provider) === 'claude'
       ? normalizeClaudeResultForDisplay(result)
@@ -182,7 +187,7 @@ export function createRunnerExecutor({
   function spawnRunner({ provider, args, cwd, workspaceDir }, options = {}) {
     return new Promise((resolve) => {
       const bin = getProviderBin(provider);
-      const child = spawn(bin, args, {
+      const child = spawnFn(bin, args, {
         cwd,
         env: spawnEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -205,6 +210,10 @@ export function createRunnerExecutor({
       let threadId = null;
       let resolved = false;
       let timedOut = false;
+      let goalCompleted = null;
+      let stoppedAfterGoalComplete = false;
+      let goalPollInFlight = false;
+      let goalMonitorTimer = null;
       let progressBridgeThreadId = null;
       let stopProgressBridge = null;
       const timeoutMs = normalizeTimeoutMs(options.timeoutMs, defaultTimeoutMs);
@@ -225,6 +234,40 @@ export function createRunnerExecutor({
         }
         stopProgressBridge = null;
         progressBridgeThreadId = null;
+      };
+
+      const stopGoalMonitor = () => {
+        if (!goalMonitorTimer) return;
+        clearInterval(goalMonitorTimer);
+        goalMonitorTimer = null;
+      };
+
+      const pollGoalCompletion = async () => {
+        if (!options.goalMonitor?.enabled || goalPollInFlight || resolved) return;
+        const monitoredThreadId = String(threadId || options.goalMonitor.threadId || '').trim();
+        if (!monitoredThreadId) return;
+        goalPollInFlight = true;
+        try {
+          const report = await options.goalMonitor.getCodexThreadGoal({ threadId: monitoredThreadId });
+          const goal = report?.goal || null;
+          if (String(goal?.status || '').trim() !== 'complete') return;
+          goalCompleted = goal;
+          stoppedAfterGoalComplete = true;
+          logs.push('Codex goal reached complete; stopping goal continuation runner.');
+          if (!child.killed) stopChildProcess(child);
+        } catch (err) {
+          logs.push(`Codex goal monitor failed: ${safeError(err)}`);
+        } finally {
+          goalPollInFlight = false;
+        }
+      };
+
+      const startGoalMonitor = () => {
+        if (!options.goalMonitor?.enabled || goalMonitorTimer) return;
+        goalMonitorTimer = setInterval(() => {
+          void pollGoalCompletion();
+        }, Math.max(100, Number(options.goalMonitor.intervalMs) || 2000));
+        void pollGoalCompletion();
       };
 
       const ensureSessionBridge = (nextThreadId) => {
@@ -290,15 +333,19 @@ export function createRunnerExecutor({
         handleRunnerEvent(provider, ev, state, ensureSessionBridge);
         usage = state.usage;
         threadId = state.threadId;
+        startGoalMonitor();
       };
 
       const finish = (result) => {
         if (resolved) return;
         resolved = true;
         if (timeout) clearTimeout(timeout);
+        stopGoalMonitor();
         stopBridges();
         resolve(result);
       };
+
+      startGoalMonitor();
 
       child.stdout.on('data', (chunk) => onData(chunk, 'stdout'));
       child.stderr.on('data', (chunk) => onData(chunk, 'stderr'));
@@ -341,10 +388,13 @@ export function createRunnerExecutor({
           }
         }
         const cancelled = Boolean(timedOut || options.wasCancelled?.());
-        const ok = !cancelled && code === 0;
+        if (goalCompleted && finalAnswerMessages.length === 0) {
+          finalAnswerMessages.push(formatCodexGoalCompletedMessage(goalCompleted));
+        }
+        const ok = stoppedAfterGoalComplete || (!cancelled && code === 0);
         finish({
           ok,
-          cancelled,
+          cancelled: stoppedAfterGoalComplete ? false : cancelled,
           timedOut,
           error: ok ? '' : buildRunnerError({ provider, code, signal, logs }),
           logs,
@@ -359,6 +409,19 @@ export function createRunnerExecutor({
     });
   }
 
+  function createCodexGoalMonitor({ provider, session, prompt } = {}) {
+    if (normalizeProvider(provider) !== 'codex') return null;
+    if (typeof getCodexThreadGoal !== 'function') return null;
+    if (!isCodexGoalContinuationPrompt(prompt)) return null;
+    const threadId = String(getSessionId(session) || '').trim();
+    return {
+      enabled: true,
+      threadId,
+      intervalMs: codexGoalMonitorIntervalMs,
+      getCodexThreadGoal,
+    };
+  }
+
   return {
     runProviderTask,
     runCodex: runProviderTask,
@@ -367,6 +430,23 @@ export function createRunnerExecutor({
     closeAllRuntimeSessions: (reason = 'closed') => claudeLongRunner.closeAll(reason),
     getClaudeLongSessions: () => claudeLongRunner.getSnapshot(),
   };
+}
+
+function isCodexGoalContinuationPrompt(prompt) {
+  const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  return normalize(prompt) === normalize(CODEX_GOAL_CONTINUATION_PROMPT);
+}
+
+function formatCodexGoalCompletedMessage(goal) {
+  const objective = String(goal?.objective || '').trim();
+  const budget = Number.isFinite(goal?.tokenBudget) && Number.isFinite(goal?.tokensUsed)
+    ? `\n预算：${goal.tokensUsed}/${goal.tokenBudget}`
+    : '';
+  return [
+    '✅ Codex goal 已完成，自动续跑已停止。',
+    objective ? `目标：${objective}` : null,
+    budget || null,
+  ].filter(Boolean).join('\n');
 }
 
 function buildRunnerError({ provider, code, signal, logs }) {

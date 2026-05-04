@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 import { createRunnerExecutor } from '../src/runner-executor.js';
+import { CODEX_GOAL_CONTINUATION_PROMPT } from '../src/codex-goal-flow.js';
 import {
   extractAgentMessageText,
   isFinalAnswerLikeAgentMessage,
@@ -112,4 +114,74 @@ test('createRunnerExecutor routes Claude long runtime to the hot-session runner'
   assert.equal(longRunInput.sessionKey, 'discord-thread-1');
   assert.equal(longRunInput.prompt, 'hello');
   assert.equal(longRunInput.systemPrompt, '[Via agents-in-discord; discord_thread=thread-1]');
+});
+
+test('createRunnerExecutor stops Codex goal continuation when official goal state becomes complete', async () => {
+  let killed = false;
+  const goalCalls = [];
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => {
+    killed = true;
+    child.killed = true;
+    queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+  };
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: (value) => String(value || '').trim().toLowerCase(),
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'codex',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveFastModeSetting: () => ({ enabled: true, source: 'config.toml' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    codexGoalMonitorIntervalMs: 1,
+    async getCodexThreadGoal({ threadId }) {
+      goalCalls.push(threadId);
+      return {
+        goal: {
+          threadId,
+          objective: 'ship goal mode',
+          status: 'complete',
+          tokenBudget: 1000,
+          tokensUsed: 900,
+        },
+      };
+    },
+    spawnFn: () => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', Buffer.from('{"type":"thread.started","thread_id":"goal-thread-1"}\n'));
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'goal-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: CODEX_GOAL_CONTINUATION_PROMPT,
+  });
+
+  assert.equal(killed, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.error, '');
+  assert.equal(result.threadId, 'goal-thread-1');
+  assert.match(result.finalAnswerMessages.join('\n'), /Codex goal 已完成/);
+  assert.deepEqual(goalCalls, ['goal-thread-1']);
 });

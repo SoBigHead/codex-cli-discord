@@ -543,6 +543,7 @@ const appContext = createAppContext({
       extractAgentMessageText,
       isFinalAnswerLikeAgentMessage,
       readGeminiSessionState,
+      getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
     },
     promptOrchestratorOptions: {
       defaultUiLanguage: DEFAULT_UI_LANGUAGE,
