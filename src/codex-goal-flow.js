@@ -68,6 +68,14 @@ export function parseCodexGoalTextInput(input = '') {
 export function parseCodexGoalSlashInput({ action = 'status', objective = '', tokenBudget = '' } = {}) {
   const normalizedAction = String(action || 'status').trim().toLowerCase();
   try {
+    const hasObjective = String(objective || '').trim() !== '';
+    const hasTokenBudget = String(tokenBudget || '').trim() !== '';
+    if (hasObjective && normalizedAction !== 'set') {
+      return { type: 'invalid', message: 'objective is only valid for goal set' };
+    }
+    if (hasTokenBudget && normalizedAction !== 'set' && normalizedAction !== 'budget') {
+      return { type: 'invalid', message: 'token_budget is only valid for goal set or budget' };
+    }
     if (normalizedAction === 'status') return { type: 'status' };
     if (normalizedAction === 'clear') return { type: 'clear' };
     if (normalizedAction === 'pause') return { type: 'set_status', status: 'paused' };

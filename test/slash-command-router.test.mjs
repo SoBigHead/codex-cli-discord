@@ -13,6 +13,9 @@ function createInteraction(commandName, optionValues = {}) {
     channel: { id: 'channel-1' },
     user: { id: 'user-1' },
     options: {
+      getSubcommand() {
+        return optionValues.subcommand ?? null;
+      },
       getString(name) {
         return optionValues[name] ?? null;
       },
@@ -493,7 +496,7 @@ test('createSlashCommandRouter sets a Codex goal through app-server', async () =
 
   const handled = await state.router({
     interaction: createInteraction('cx_goal', {
-      action: 'set',
+      subcommand: 'set',
       objective: 'ship Discord goal command',
       token_budget: '90000',
     }),
@@ -516,6 +519,29 @@ test('createSlashCommandRouter sets a Codex goal through app-server', async () =
   assert.equal(queuedPrompts.length, 1);
   assert.equal(queuedPrompts[0].key, 'channel-1');
   assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
+});
+
+test('createSlashCommandRouter rejects Codex goal set without objective', async () => {
+  const goalCalls = [];
+  const state = createRouterState({
+    getSessionId: () => 'thread-1',
+    async setCodexThreadGoal(options) {
+      goalCalls.push(options);
+      throw new Error('should not call app-server');
+    },
+  });
+
+  const handled = await state.router({
+    interaction: createInteraction('cx_goal', { subcommand: 'set' }),
+    commandName: 'goal',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.equal(goalCalls.length, 0);
+  assert.match(state.replies[0].content, /goal objective is required/);
 });
 
 test('createSlashCommandRouter rejects Codex goal without a bound session', async () => {

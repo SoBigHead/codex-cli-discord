@@ -653,8 +653,11 @@ export function createSlashCommandRouter({
   registerSlashHandlers(handlers, ['goal'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
     const provider = getSessionProvider(session);
+    const subcommand = typeof interaction.options.getSubcommand === 'function'
+      ? interaction.options.getSubcommand(false)
+      : null;
     const action = parseCodexGoalSlashInput({
-      action: interaction.options.getString('action') || 'status',
+      action: subcommand || interaction.options.getString('action') || 'status',
       objective: interaction.options.getString('objective') || '',
       tokenBudget: interaction.options.getString('token_budget') || '',
     });

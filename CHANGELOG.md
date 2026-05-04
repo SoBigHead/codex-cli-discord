@@ -8,6 +8,10 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ### Changed
 - Hardened project upgrades with temporary-worktree validation before touching the main checkout, cached status checks, admin-only apply/mode commands, cross-bot heartbeat idle checks, and `all` as the default restart target.
+- Reworked `/goal` into action-specific subcommands so `set` requires an objective and non-text actions no longer expose irrelevant free-text inputs.
+
+### Fixed
+- Stopped completed Codex goal continuations from leaving Discord progress cards running when `codex exec` does not exit after SIGTERM.
 
 ## [0.12.9] - 2026-05-04
 

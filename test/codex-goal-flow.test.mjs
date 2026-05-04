@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   CODEX_GOAL_CONTINUATION_PROMPT,
   formatCodexGoalResult,
+  parseCodexGoalSlashInput,
   shouldStartCodexGoalContinuation,
 } from '../src/codex-goal-flow.js';
 
@@ -29,6 +30,17 @@ test('Codex goal continuation only starts when a command makes the goal active',
     { type: 'set_status', status: 'complete' },
     { ok: true, goal: { status: 'complete' } },
   ), false);
+});
+
+test('Codex goal slash input rejects fields on unrelated actions', () => {
+  assert.deepEqual(
+    parseCodexGoalSlashInput({ action: 'status', objective: 'ship it' }),
+    { type: 'invalid', message: 'objective is only valid for goal set' },
+  );
+  assert.deepEqual(
+    parseCodexGoalSlashInput({ action: 'pause', tokenBudget: '120000' }),
+    { type: 'invalid', message: 'token_budget is only valid for goal set or budget' },
+  );
 });
 
 test('Codex goal active status says to finish by marking complete or reporting a blocker', () => {

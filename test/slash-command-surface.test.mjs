@@ -25,6 +25,13 @@ class MockSlashCommandBuilder {
     return this;
   }
 
+  addSubcommand(configure) {
+    const option = new MockSlashSubcommandBuilder();
+    configure(option);
+    this.data.options.push(option.data);
+    return this;
+  }
+
   toJSON() {
     return this.data;
   }
@@ -52,6 +59,21 @@ class MockSlashOptionBuilder {
 
   addChoices(...choices) {
     this.data.choices.push(...choices);
+    return this;
+  }
+}
+
+class MockSlashSubcommandBuilder extends MockSlashOptionBuilder {
+  constructor() {
+    super();
+    this.data.type = 'subcommand';
+    this.data.options = [];
+  }
+
+  addStringOption(configure) {
+    const option = new MockSlashOptionBuilder();
+    configure(option);
+    this.data.options.push(option.data);
     return this;
   }
 }
@@ -92,6 +114,13 @@ test('buildSlashCommands includes workspace commands and aliases', () => {
   assert.ok(names.includes('cx_onboarding_config'));
   assert.ok(!names.includes('cx_retry'));
   assert.ok(!names.includes('cx_process_lines'));
+
+  const goal = commands.find((command) => command.name === 'cx_goal');
+  const goalSet = goal.options.find((option) => option.name === 'set');
+  const goalPause = goal.options.find((option) => option.name === 'pause');
+  assert.ok(goalSet);
+  assert.equal(goalSet.options.find((option) => option.name === 'objective').required, true);
+  assert.equal(goalPause.options?.length, 0);
 });
 
 test('buildSlashCommands exposes browse keyword in workspace option descriptions', () => {
