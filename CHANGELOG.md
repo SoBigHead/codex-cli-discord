@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Changed
+- Hardened project upgrades with temporary-worktree validation before touching the main checkout, cached status checks, admin-only apply/mode commands, cross-bot heartbeat idle checks, and `all` as the default restart target.
+
 ## [0.12.9] - 2026-05-04
 
 ### Added

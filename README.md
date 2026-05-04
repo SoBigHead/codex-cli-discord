@@ -195,7 +195,7 @@ npm run upgrade:project -- status
 npm run upgrade:project -- apply
 ```
 
-Discord 里也可以用 `/cx_upgrade action:apply` 或 `!upgrade apply`。升级只会在工作区干净、当前分支能 fast-forward 到远端时执行；本地有改动、分支分叉、远端不可达都会停止。
+Discord 里也可以用 `/cx_upgrade action:apply` 或 `!upgrade apply`。升级只会在工作区干净、当前分支能 fast-forward 到远端时执行；本地有改动、分支分叉、远端不可达都会停止。执行前会先在临时 worktree 里安装依赖并跑验证，验证通过后才修改主工作区。
 
 升级模式：
 
@@ -205,13 +205,16 @@ npm run upgrade:project -- auto
 npm run upgrade:project -- off
 ```
 
-`notify` 是默认值，只提示。`auto` 会在检测到安全升级时自动执行验证并请求重启。常用环境变量：
+`notify` 是默认值，只提示。`auto` 会在检测到安全升级且所有活跃 bot 进程都空闲时自动执行验证并请求重启。项目升级默认重启 `all`，因为多个 provider bot 通常共用同一个仓库。Discord 里的 `apply` 和 `mode` 需要 `AGENTS_IN_DISCORD_UPGRADE_ADMIN_USER_IDS`，未配置时只能查状态。常用环境变量：
 
 ```bash
 AGENTS_IN_DISCORD_UPGRADE_MODE=notify
+AGENTS_IN_DISCORD_UPGRADE_ADMIN_USER_IDS=123,456
 AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS=123,456
 AGENTS_IN_DISCORD_UPGRADE_CHECK_INTERVAL_MS=21600000
+AGENTS_IN_DISCORD_UPGRADE_STATUS_CACHE_MS=600000
 AGENTS_IN_DISCORD_UPGRADE_VERIFY_COMMAND="npm run test:progress"
+AGENTS_IN_DISCORD_UPGRADE_RESTART_TARGET=all
 ```
 
 ## Codex CLI 自动升级
