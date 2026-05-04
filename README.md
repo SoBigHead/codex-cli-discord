@@ -184,6 +184,36 @@ scripts/restart-discord-bot-service.sh all
 
 这个脚本会使用受保护的 launchd label，避免误用危险的 `launchctl` 操作。
 
+## 项目升级
+
+Bot 会检查 `agents-in-discord` 自己是否落后远端，默认只提示，不会自动改文件。可以在 Discord 里用 `/cx_upgrade action:status` 或 `!upgrade status` 查看本地版本、远端版本、落后提交数和更新说明。
+
+手动升级：
+
+```bash
+npm run upgrade:project -- status
+npm run upgrade:project -- apply
+```
+
+Discord 里也可以用 `/cx_upgrade action:apply` 或 `!upgrade apply`。升级只会在工作区干净、当前分支能 fast-forward 到远端时执行；本地有改动、分支分叉、远端不可达都会停止。
+
+升级模式：
+
+```bash
+npm run upgrade:project -- notify
+npm run upgrade:project -- auto
+npm run upgrade:project -- off
+```
+
+`notify` 是默认值，只提示。`auto` 会在检测到安全升级时自动执行验证并请求重启。常用环境变量：
+
+```bash
+AGENTS_IN_DISCORD_UPGRADE_MODE=notify
+AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS=123,456
+AGENTS_IN_DISCORD_UPGRADE_CHECK_INTERVAL_MS=21600000
+AGENTS_IN_DISCORD_UPGRADE_VERIFY_COMMAND="npm run test:progress"
+```
+
 ## Codex CLI 自动升级
 
 仓库内置一个可选的 Codex CLI 升级器。它可以定时检查 Codex 更新，升级成功后重启 bot 服务。

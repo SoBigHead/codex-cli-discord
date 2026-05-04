@@ -6,6 +6,12 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+## [0.12.9] - 2026-05-04
+
+### Added
+- Added project upgrade checks for agents-in-discord itself, including `/upgrade`, `!upgrade`, `/status` visibility, notify-by-default mode, and optional safe auto-upgrade.
+- Added a project upgrade CLI that refuses dirty, diverged, or non-fast-forward updates and runs verification before requesting a restart.
+
 ## [0.12.8] - 2026-05-04
 
 ### Fixed
