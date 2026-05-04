@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Fixed
+- Fell back to channel sends when Discord interaction webhook tokens expire, so delayed replies such as goal completion notices are still delivered.
+
 ## [0.12.10] - 2026-05-04
 
 ### Changed

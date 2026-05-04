@@ -77,3 +77,34 @@ test('safeReply recovers with the live Discord client after the original client 
   assert.deepEqual(replies, ['hello world']);
   assert.deepEqual(result, { id: 'reply-1' });
 });
+
+test('safeReply falls back to channel send after an expired interaction webhook token', async () => {
+  const sent = [];
+
+  const interaction = {
+    id: 'interaction-1',
+    channelId: 'channel-1',
+    system: false,
+    channel: {
+      id: 'channel-1',
+      async send(payload) {
+        sent.push(payload);
+        return { id: 'fallback-1' };
+      },
+    },
+    async reply() {
+      const err = new Error('Invalid Webhook Token');
+      err.code = 50027;
+      err.status = 401;
+      err.rawError = { message: 'Invalid Webhook Token', code: 50027 };
+      throw err;
+    },
+  };
+
+  const result = await safeReply(interaction, 'goal complete', {
+    logger: createLogger(),
+  });
+
+  assert.deepEqual(sent, ['goal complete']);
+  assert.deepEqual(result, { id: 'fallback-1' });
+});

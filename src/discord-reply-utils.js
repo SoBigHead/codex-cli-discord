@@ -86,6 +86,18 @@ export function isStaleDiscordClientError(err) {
   return text.includes(TOKEN_MISSING_HINT);
 }
 
+export function isExpiredInteractionWebhookError(err) {
+  if (!err) return false;
+  if (hasDiscordValidationCode(err, 50027)) return true;
+
+  const text = [
+    String(err?.message || ''),
+    String(err?.rawError?.message || ''),
+    String(err?.cause?.message || ''),
+  ].join(' ').toLowerCase();
+  return text.includes('invalid webhook token');
+}
+
 export async function withDiscordNetworkRetry(action, {
   logger = console,
   label = 'discord call',
@@ -256,6 +268,14 @@ export async function safeReply(message, payload, {
   } catch (err) {
     if (isReplyToSystemMessageError(err)) {
       logger.warn(`⚠️ Cannot reply to system message ${message?.id || '(unknown)'}, fallback to channel.send`);
+      return safeChannelSend(message, channelPayload, {
+        logger,
+        getActiveClient,
+      });
+    }
+
+    if (isExpiredInteractionWebhookError(err)) {
+      logger.warn(`⚠️ Interaction webhook expired for ${message?.id || '(unknown)'}, fallback to channel.send`);
       return safeChannelSend(message, channelPayload, {
         logger,
         getActiveClient,
