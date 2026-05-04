@@ -21,10 +21,19 @@ export function normalizeForkThreadName(value) {
   return text ? text.slice(0, 100) : '';
 }
 
+function normalizeForkWorkspaceDir(value) {
+  const text = String(value || '').trim();
+  return text || null;
+}
+
 function shortenId(value) {
   const text = normalizeForkSessionId(value);
   if (!text) return 'new';
   return text.length <= 12 ? text : text.slice(0, 8);
+}
+
+function getForkRequesterId(source) {
+  return String(source?.user?.id || source?.author?.id || '').trim() || null;
 }
 
 export function parseForkTextInput(input) {
@@ -92,6 +101,58 @@ export function createSyntheticForkMessage(source, childThread) {
   };
 }
 
+function formatForkProviderLabel(provider) {
+  const normalizedProvider = normalizeForkProvider(provider);
+  if (normalizedProvider === 'claude') return 'Claude';
+  if (normalizedProvider === 'gemini') return 'Gemini';
+  return 'Codex';
+}
+
+function formatForkOriginNotice({ userId, provider, parentSessionId, forkedSessionId, language = 'zh' } = {}) {
+  const mention = userId ? `<@${userId}> ` : '';
+  const providerLabel = formatForkProviderLabel(provider);
+  if (language === 'en') {
+    return `${mention}This thread was forked from ${providerLabel} session \`${parentSessionId}\`. Fork session: \`${forkedSessionId}\`.`;
+  }
+  return `${mention}这是从 ${providerLabel} session \`${parentSessionId}\` fork 过来的。fork session：\`${forkedSessionId}\`。`;
+}
+
+async function sendForkOriginNotice(childThread, {
+  source,
+  provider,
+  parentSessionId,
+  forkedSessionId,
+  language,
+} = {}) {
+  if (typeof childThread?.send !== 'function') {
+    return { ok: false, skipped: true, error: 'child thread cannot send messages' };
+  }
+  const userId = getForkRequesterId(source);
+  const payload = {
+    content: formatForkOriginNotice({
+      userId,
+      provider,
+      parentSessionId,
+      forkedSessionId,
+      language,
+    }),
+  };
+  if (userId) {
+    payload.allowedMentions = { users: [userId] };
+  }
+  try {
+    const message = await childThread.send(payload);
+    return { ok: true, message, userId };
+  } catch (err) {
+    return {
+      ok: false,
+      skipped: false,
+      userId,
+      error: String(err?.message || err || 'unknown error'),
+    };
+  }
+}
+
 export async function createCodexForkThread({
   ...options
 } = {}) {
@@ -117,6 +178,7 @@ export async function createProviderForkThread({
   resolveSecurityContext,
   createThread = createDiscordForkThread,
   generateSessionId = randomUUID,
+  resolveForkWorkspace = () => null,
 } = {}) {
   const normalizedProvider = normalizeForkProvider(provider);
   const normalizedParentSessionId = normalizeForkSessionId(parentSessionId);
@@ -148,6 +210,22 @@ export async function createProviderForkThread({
     : null;
   if (normalizedProvider === 'claude' && !plannedForkedSessionId) {
     throw new Error('Claude fork did not receive a generated session id');
+  }
+  const forkWorkspaceDir = normalizedProvider === 'claude'
+    ? normalizeForkWorkspaceDir(resolveForkWorkspace({
+      provider: normalizedProvider,
+      parentSessionId: normalizedParentSessionId,
+      parentSession: session,
+      source,
+    }))
+    : null;
+  if (normalizedProvider === 'claude' && !forkWorkspaceDir) {
+    return {
+      ok: false,
+      reason: 'fork_workspace_unavailable',
+      provider: normalizedProvider,
+      parentSessionId: normalizedParentSessionId,
+    };
   }
 
   const childThread = await createThread(source, {
@@ -197,12 +275,22 @@ export async function createProviderForkThread({
     channel: childThread,
     parentChannelId: key,
   });
+  if (forkWorkspaceDir) {
+    childSession.workspaceDir = forkWorkspaceDir;
+  }
   const binding = commandActions.bindForkedSession(childSession, {
     sessionId: forkedSessionId,
     parentSessionId: normalizedParentSessionId,
     parentChannelId: key,
     provider: normalizedProvider,
     pendingForkFromSessionId: normalizedProvider === 'claude' ? normalizedParentSessionId : null,
+  });
+  const notice = await sendForkOriginNotice(childThread, {
+    source,
+    provider: normalizedProvider,
+    parentSessionId: normalizedParentSessionId,
+    forkedSessionId,
+    language: session?.language || childSession?.language || 'zh',
   });
 
   const normalizedPrompt = String(prompt || '').trim();
@@ -236,15 +324,9 @@ export async function createProviderForkThread({
     childThread,
     childSession,
     binding,
+    notice,
     promptQueue,
   };
-}
-
-function formatForkProviderLabel(provider) {
-  const normalizedProvider = normalizeForkProvider(provider);
-  if (normalizedProvider === 'claude') return 'Claude';
-  if (normalizedProvider === 'gemini') return 'Gemini';
-  return 'Codex';
 }
 
 export function formatCodexForkResult(result, language = 'zh') {
@@ -274,6 +356,11 @@ export function formatProviderForkResult(result, language = 'zh') {
         ? `❌ ${providerLabel} native fork is unavailable in this runtime.`
         : `❌ 当前运行环境没有接入 ${providerLabel} 原生 fork。`;
     }
+    if (result?.reason === 'fork_workspace_unavailable') {
+      return language === 'en'
+        ? `❌ Cannot resolve the parent ${providerLabel} workspace for fork.`
+        : `❌ 无法解析父 ${providerLabel} session 的工作目录，fork 已取消。`;
+    }
     if (result?.reason === 'thread_unavailable') {
       return language === 'en'
         ? '❌ This Discord channel cannot create a fork thread.'
@@ -286,6 +373,9 @@ export function formatProviderForkResult(result, language = 'zh') {
   const promptQueued = result.promptQueue?.enqueued;
   const queuedAhead = Number(result.promptQueue?.queuedAhead || 0);
   const promptError = String(result.promptQueue?.error || '').trim();
+  const noticeError = result.notice && !result.notice.ok && !result.notice.skipped
+    ? String(result.notice.error || '').trim()
+    : '';
   if (language === 'en') {
     return [
       promptError
@@ -295,6 +385,7 @@ export function formatProviderForkResult(result, language = 'zh') {
       `• parent session: \`${result.parentSessionId}\``,
       promptQueued ? `• prompt queued in fork${queuedAhead > 0 ? ` (${queuedAhead} ahead)` : ''}` : null,
       promptError ? `• error: ${promptError}` : null,
+      noticeError ? `• notice failed: ${noticeError}` : null,
     ].filter(Boolean).join('\n');
   }
   return [
@@ -305,5 +396,6 @@ export function formatProviderForkResult(result, language = 'zh') {
     `• parent session: \`${result.parentSessionId}\``,
     promptQueued ? `• prompt 已进入 fork 队列${queuedAhead > 0 ? `，前面还有 ${queuedAhead} 条` : ''}` : null,
     promptError ? `• 错误：${promptError}` : null,
+    noticeError ? `• 通知发送失败：${noticeError}` : null,
   ].filter(Boolean).join('\n');
 }

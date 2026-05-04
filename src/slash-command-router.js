@@ -141,6 +141,7 @@ export function createSlashCommandRouter({
   closeRuntimeSession = () => false,
   retryLastPrompt,
   forkCodexThread,
+  resolveForkWorkspace,
   getCodexThreadGoal,
   setCodexThreadGoal,
   clearCodexThreadGoal,
@@ -624,6 +625,7 @@ export function createSlashCommandRouter({
         getSession,
         commandActions,
         forkCodexThread,
+        resolveForkWorkspace,
         enqueuePrompt,
         resolveSecurityContext,
       });

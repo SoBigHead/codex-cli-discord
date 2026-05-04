@@ -278,6 +278,7 @@ test('createSlashCommandRouter creates native Codex fork in a new thread and pre
   const childSession = { provider: 'codex', language: 'zh' };
   const threadCreates = [];
   const queuedPrompts = [];
+  const threadMessages = [];
   const childThread = {
     id: 'fork-channel-1',
     name: 'fork',
@@ -287,7 +288,7 @@ test('createSlashCommandRouter creates native Codex fork in a new thread and pre
       this.setNameCalls.push({ name, reason });
     },
     async send(payload) {
-      queuedPrompts.push({ kind: 'send', payload });
+      threadMessages.push(payload);
     },
   };
   const state = createRouterState({
@@ -343,6 +344,9 @@ test('createSlashCommandRouter creates native Codex fork in a new thread and pre
   assert.equal(threadCreates[0].name, 'design branch');
   assert.deepEqual(childThread.setNameCalls, []);
   assert.equal(queuedPrompts.length, 0);
+  assert.equal(threadMessages.length, 1);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是从 Codex session `parent-1` fork 过来的。/);
+  assert.deepEqual(threadMessages[0].allowedMentions, { users: ['user-1'] });
   assert.match(state.replies[0].content, /已创建 Codex fork：<#fork-channel-1>/);
   assert.match(state.replies[0].content, /fork-session-1/);
 });
@@ -351,6 +355,7 @@ test('createSlashCommandRouter creates native Claude fork in a new thread and re
   const parentSession = { provider: 'claude', language: 'zh', runnerSessionId: 'parent-claude-1' };
   const childSession = { provider: 'claude', language: 'zh' };
   const threadCreates = [];
+  const threadMessages = [];
   const childThread = {
     id: 'fork-channel-1',
     setNameCalls: [],
@@ -358,7 +363,9 @@ test('createSlashCommandRouter creates native Claude fork in a new thread and re
     async setName(name, reason) {
       this.setNameCalls.push({ name, reason });
     },
-    async send() {},
+    async send(payload) {
+      threadMessages.push(payload);
+    },
   };
   const state = createRouterState({
     getSession(key) {
@@ -368,6 +375,7 @@ test('createSlashCommandRouter creates native Claude fork in a new thread and re
     getSessionId: (currentSession) => currentSession?.runnerSessionId || null,
     getRuntimeSnapshot: () => ({ running: false, queued: 0 }),
     getProviderDisplayName: (provider) => provider === 'claude' ? 'Claude Code' : provider,
+    resolveForkWorkspace: () => '/repo/parent-workspace',
     commandActions: {
       bindForkedSession(currentSession, binding) {
         currentSession.runnerSessionId = binding.sessionId;
@@ -406,9 +414,13 @@ test('createSlashCommandRouter creates native Claude fork in a new thread and re
   assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
   assert.equal(childSession.forkedFromSessionId, 'parent-claude-1');
   assert.equal(childSession.forkedFromProvider, 'claude');
+  assert.equal(childSession.workspaceDir, '/repo/parent-workspace');
   assert.equal(childSession.pendingForkFromSessionId, 'parent-claude-1');
   assert.equal(threadCreates[0].name, 'claude branch');
   assert.deepEqual(childThread.setNameCalls, []);
+  assert.equal(threadMessages.length, 1);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是从 Claude session `parent-claude-1` fork 过来的。/);
+  assert.deepEqual(threadMessages[0].allowedMentions, { users: ['user-1'] });
   assert.match(state.replies[0].content, /已创建 Claude fork：<#fork-channel-1>/);
 });
 

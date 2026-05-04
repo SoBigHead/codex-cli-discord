@@ -54,6 +54,7 @@ import {
   findLatestClaudeSessionFileBySessionId,
   findLatestRolloutFileBySessionId,
   listRecentSessions as listRecentProviderSessions,
+  readClaudeSessionMetaBySessionId,
   readCodexSessionMetaBySessionId,
   readGeminiSessionState,
   resolveGeminiProjectRootBySessionId,
@@ -697,6 +698,11 @@ const appContext = createAppContext({
       parseExtraInfoConfigAction,
       resolvePath,
       forkCodexThread: (options) => forkCodexThread({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
+      resolveForkWorkspace: ({ provider, parentSessionId } = {}) => (
+        normalizeProvider(provider) === 'claude'
+          ? readClaudeSessionMetaBySessionId(parentSessionId)?.cwd
+          : null
+      ),
       getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       setCodexThreadGoal: (options) => setCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       clearCodexThreadGoal: (options) => clearCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
@@ -726,6 +732,11 @@ const appContext = createAppContext({
       isReasoningEffortSupported,
       resolvePath,
       forkCodexThread: (options) => forkCodexThread({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
+      resolveForkWorkspace: ({ provider, parentSessionId } = {}) => (
+        normalizeProvider(provider) === 'claude'
+          ? readClaudeSessionMetaBySessionId(parentSessionId)?.cwd
+          : null
+      ),
       getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       setCodexThreadGoal: (options) => setCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       clearCodexThreadGoal: (options) => clearCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),

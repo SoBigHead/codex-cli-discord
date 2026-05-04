@@ -114,6 +114,7 @@ test('createProviderForkThread prepares Claude fork without mutating the parent 
   const childSession = { provider: 'claude', runnerSessionId: null };
   const threadCreates = [];
   const setNameCalls = [];
+  const threadMessages = [];
   const result = await createProviderForkThread({
     key: 'parent-channel',
     session: parentSession,
@@ -130,7 +131,9 @@ test('createProviderForkThread prepares Claude fork without mutating the parent 
               async setName(name, reason) {
                 setNameCalls.push({ name, reason });
               },
-              async send() {},
+              async send(payload) {
+                threadMessages.push(payload);
+              },
             };
           },
         },
@@ -139,6 +142,7 @@ test('createProviderForkThread prepares Claude fork without mutating the parent 
     provider: 'claude',
     parentSessionId: 'parent-session',
     generateSessionId: () => 'child-session',
+    resolveForkWorkspace: () => '/repo/parent-workspace',
     getSession: () => childSession,
     commandActions: {
       bindForkedSession(currentSession, binding) {
@@ -161,9 +165,46 @@ test('createProviderForkThread prepares Claude fork without mutating the parent 
   assert.equal(setNameCalls[0].name, 'claude fork child-se from parent-s');
   assert.equal(parentSession.runnerSessionId, 'parent-session');
   assert.equal(childSession.runnerSessionId, 'child-session');
+  assert.equal(childSession.workspaceDir, '/repo/parent-workspace');
   assert.equal(childSession.forkedFromProvider, 'claude');
   assert.equal(childSession.forkedFromSessionId, 'parent-session');
   assert.equal(childSession.pendingForkFromSessionId, 'parent-session');
+  assert.equal(threadMessages.length, 1);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是从 Claude session `parent-session` fork 过来的。/);
+  assert.deepEqual(threadMessages[0].allowedMentions, { users: ['user-1'] });
+});
+
+test('createProviderForkThread refuses Claude fork when parent workspace cannot be resolved', async () => {
+  let createdThread = false;
+  const result = await createProviderForkThread({
+    key: 'parent-channel',
+    session: { provider: 'claude', runnerSessionId: 'parent-session' },
+    source: {
+      ...createForkSource(),
+      channel: {
+        id: 'parent-channel',
+        threads: {
+          async create() {
+            createdThread = true;
+            return { id: 'child-channel' };
+          },
+        },
+      },
+    },
+    provider: 'claude',
+    parentSessionId: 'parent-session',
+    generateSessionId: () => 'child-session',
+    getSession: () => ({ provider: 'claude' }),
+    commandActions: {
+      bindForkedSession() {
+        throw new Error('should not bind without a workspace');
+      },
+    },
+  });
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'fork_workspace_unavailable');
+  assert.equal(createdThread, false);
 });
 
 test('formatCodexForkResult makes prompt enqueue failure explicit', async () => {

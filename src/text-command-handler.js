@@ -104,6 +104,7 @@ export function createTextCommandHandler({
   cancelChannelWork,
   closeRuntimeSession = () => false,
   forkCodexThread,
+  resolveForkWorkspace,
   getCodexThreadGoal,
   setCodexThreadGoal,
   clearCodexThreadGoal,
@@ -467,6 +468,7 @@ export function createTextCommandHandler({
             getSession,
             commandActions,
             forkCodexThread,
+            resolveForkWorkspace,
             enqueuePrompt,
             resolveSecurityContext,
           });

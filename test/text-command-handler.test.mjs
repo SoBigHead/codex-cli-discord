@@ -187,6 +187,7 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
   const replies = [];
   const parentSession = { provider: 'codex', language: 'zh', runnerSessionId: 'parent-1' };
   const childSession = { provider: 'codex', language: 'zh' };
+  const threadMessages = [];
   const childThread = {
     id: 'fork-channel-1',
     setNameCalls: [],
@@ -194,7 +195,9 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
     async setName(name, reason) {
       this.setNameCalls.push({ name, reason });
     },
-    async send() {},
+    async send(payload) {
+      threadMessages.push(payload);
+    },
   };
   const threadCreates = [];
   const queuedPrompts = [];
@@ -247,6 +250,9 @@ test('createTextCommandHandler creates native Codex fork from text command', asy
   assert.equal(threadCreates[0].name, 'My fork thread');
   assert.deepEqual(childThread.setNameCalls, []);
   assert.deepEqual(queuedPrompts, []);
+  assert.equal(threadMessages.length, 1);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是从 Codex session `parent-1` fork 过来的。/);
+  assert.deepEqual(threadMessages[0].allowedMentions, { users: ['user-1'] });
   assert.match(replies[0], /已创建 Codex fork：<#fork-channel-1>/);
 });
 
@@ -254,6 +260,7 @@ test('createTextCommandHandler creates native Claude fork from text command', as
   const replies = [];
   const parentSession = { provider: 'claude', language: 'zh', runnerSessionId: 'parent-claude-1' };
   const childSession = { provider: 'claude', language: 'zh' };
+  const threadMessages = [];
   const childThread = {
     id: 'fork-channel-1',
     setNameCalls: [],
@@ -261,7 +268,9 @@ test('createTextCommandHandler creates native Claude fork from text command', as
     async setName(name, reason) {
       this.setNameCalls.push({ name, reason });
     },
-    async send() {},
+    async send(payload) {
+      threadMessages.push(payload);
+    },
   };
   const threadCreates = [];
   const handleCommand = createTextCommandHandler({
@@ -271,6 +280,7 @@ test('createTextCommandHandler creates native Claude fork from text command', as
     getSessionLanguage: () => 'zh',
     getProviderDisplayName: () => 'Claude Code',
     getRuntimeSnapshot: () => ({ running: false, queued: 0 }),
+    resolveForkWorkspace: () => '/repo/parent-workspace',
     commandActions: {
       bindForkedSession(currentSession, binding) {
         currentSession.runnerSessionId = binding.sessionId;
@@ -306,9 +316,13 @@ test('createTextCommandHandler creates native Claude fork from text command', as
   assert.match(childSession.runnerSessionId, /^[0-9a-f-]{36}$/i);
   assert.equal(childSession.forkedFromSessionId, 'parent-claude-1');
   assert.equal(childSession.forkedFromProvider, 'claude');
+  assert.equal(childSession.workspaceDir, '/repo/parent-workspace');
   assert.equal(childSession.pendingForkFromSessionId, 'parent-claude-1');
   assert.equal(threadCreates[0].name, 'Claude fork thread');
   assert.deepEqual(childThread.setNameCalls, []);
+  assert.equal(threadMessages.length, 1);
+  assert.match(threadMessages[0].content, /^<@user-1> 这是从 Claude session `parent-claude-1` fork 过来的。/);
+  assert.deepEqual(threadMessages[0].allowedMentions, { users: ['user-1'] });
   assert.match(replies[0], /已创建 Claude fork：<#fork-channel-1>/);
 });
 
