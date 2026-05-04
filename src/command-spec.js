@@ -225,11 +225,11 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
     },
     (!lockedProvider || lockedProvider === 'claude') && {
       name: 'runtime',
-      description: '切换 Claude 接入方式（normal/long/status/default）',
+      description: '切换运行时接入方式（exec/long/status/default）',
       configure(builder) {
-        return builder.addStringOption(o => o.setName('mode').setDescription('Claude runtime').setRequired(true)
+        return builder.addStringOption(o => o.setName('mode').setDescription('runtime mode').setRequired(true)
           .addChoices(
-            { name: 'normal', value: 'normal' },
+            { name: 'exec', value: 'normal' },
             { name: 'long', value: 'long' },
             { name: 'status', value: 'status' },
             { name: 'default', value: 'default' },

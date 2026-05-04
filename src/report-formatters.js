@@ -1,6 +1,6 @@
 import { formatWorkspaceBusyReport as formatWorkspaceBusyReportBase } from './workspace-busy-report.js';
 import { getProviderCommandAlias } from './command-spec.js';
-import { formatCodexProfileLabel, formatReplyDeliveryModeLabel } from './session-settings.js';
+import { formatBusyPromptModeLabel, formatCodexProfileLabel, formatReplyDeliveryModeLabel } from './session-settings.js';
 import { formatCodexGoalBudget, formatCodexGoalStatus } from './codex-goal-flow.js';
 import {
   buildExtraInfoPromptLine,
@@ -47,6 +47,7 @@ export function createReportFormatters({
   resolveTimeoutSetting = () => ({ timeoutMs: 0, source: 'env default' }),
   resolveFastModeSetting = () => ({ enabled: false, supported: false, source: 'provider unsupported' }),
   resolveRuntimeModeSetting = () => ({ mode: 'normal', supported: false, source: 'provider unsupported' }),
+  resolveBusyPromptModeSetting = () => ({ mode: 'queue', requestedMode: 'queue', canSteer: false, supported: true, source: 'built-in default', reason: null }),
   resolveReplyDeliverySetting = () => ({ mode: 'card_mention', source: 'env default' }),
   resolveExtraInfoSetting = () => ({ enabled: true, enabledSource: 'env default', text: DEFAULT_EXTRA_INFO_TEMPLATE, textSource: 'env default' }),
   getEffectiveSecurityProfile = () => ({ profile: 'team', source: 'env default' }),
@@ -196,7 +197,15 @@ export function createReportFormatters({
   function formatRuntimeModeLabel(mode, language = 'en') {
     return mode === 'long'
       ? (language === 'en' ? 'long (hot session)' : 'long（热会话）')
-      : (language === 'en' ? 'normal (per request)' : 'normal（每轮启动）');
+      : (language === 'en' ? 'exec (per request)' : 'exec（每轮启动）');
+  }
+
+  function formatBusyPromptStatus(setting, language = 'en') {
+    const reason = setting?.reason ? `, ${setting.reason}` : '';
+    if (language === 'en') {
+      return `${formatBusyPromptModeLabel(setting?.mode, language)} (${formatSettingSourceLabel(setting?.source, language)}${reason})`;
+    }
+    return `${formatBusyPromptModeLabel(setting?.mode, language)}（${formatSettingSourceLabel(setting?.source, language)}${setting?.reason ? `，${setting.reason}` : ''}）`;
   }
 
   function formatPercent(value) {
@@ -518,6 +527,7 @@ export function createReportFormatters({
     const security = resolveSecurityContext(channel, session);
     const fastMode = resolveFastModeSetting(session);
     const runtimeMode = resolveRuntimeModeSetting(session);
+    const busyPromptMode = resolveBusyPromptModeSetting(session);
     const compactSetting = resolveCompactStrategySetting(session);
     const compactEnabled = resolveCompactEnabledSetting(session);
     const compactThreshold = resolveCompactThresholdSetting(session);
@@ -546,7 +556,8 @@ export function createReportFormatters({
         `• mode: ${modeDesc}`,
         `• effort: ${defaultEffort}`,
         fastMode.supported ? `• fast mode: ${formatFastModeLabel(fastMode.enabled, lang)} (${formatSettingSourceLabel(fastMode.source, lang)})` : null,
-        runtimeMode.supported ? `• Claude runtime: ${formatRuntimeModeLabel(runtimeMode.mode, lang)} (${formatSettingSourceLabel(runtimeMode.source, lang)})` : null,
+        runtimeMode.supported ? `• runtime: ${formatRuntimeModeLabel(runtimeMode.mode, lang)} (${formatSettingSourceLabel(runtimeMode.source, lang)})` : null,
+        `• busy prompt: ${formatBusyPromptStatus(busyPromptMode, lang)}`,
         ...workspaceLines,
         `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)} (${formatSettingSourceLabel(compactSetting.source, lang)})`,
         `• reply delivery: ${formatReplyDeliveryModeLabel(replyDelivery.mode, lang)} (${formatSettingSourceLabel(replyDelivery.source, lang)})`,
@@ -575,7 +586,8 @@ export function createReportFormatters({
       `• mode: ${modeDesc}`,
       `• effort: ${defaultEffort}`,
       fastMode.supported ? `• fast mode: ${formatFastModeLabel(fastMode.enabled, lang)}（${formatSettingSourceLabel(fastMode.source, lang)}）` : null,
-      runtimeMode.supported ? `• Claude runtime: ${formatRuntimeModeLabel(runtimeMode.mode, lang)}（${formatSettingSourceLabel(runtimeMode.source, lang)}）` : null,
+      runtimeMode.supported ? `• 运行时: ${formatRuntimeModeLabel(runtimeMode.mode, lang)}（${formatSettingSourceLabel(runtimeMode.source, lang)}）` : null,
+      `• 运行中消息: ${formatBusyPromptStatus(busyPromptMode, lang)}`,
       ...workspaceLines,
       `• compact strategy: ${describeCompactStrategy(compactSetting.strategy, lang)}（${formatSettingSourceLabel(compactSetting.source, lang)}）`,
       `• 回复方式：${formatReplyDeliveryModeLabel(replyDelivery.mode, lang)}（${formatSettingSourceLabel(replyDelivery.source, lang)}）`,
@@ -979,39 +991,39 @@ export function createReportFormatters({
   function formatRuntimeModeConfigHelp(language, provider = 'claude') {
     if (provider !== 'claude') {
       return language === 'en'
-        ? `Current provider ${getProviderDisplayName(provider)} does not support Claude runtime mode.`
-        : `当前 provider ${getProviderDisplayName(provider)} 不支持 Claude runtime mode。`;
+        ? `Current provider ${getProviderDisplayName(provider)} does not expose runtime mode switching yet.`
+        : `当前 provider ${getProviderDisplayName(provider)} 暂未开放运行时切换。`;
     }
     if (language === 'en') {
       return [
-        'Usage: `!runtime <normal|long|status|default>`',
-        `Slash: \`${slashRef('runtime')} <normal|long|status|default>\``,
-        '`normal` keeps the old one-process-per-request path. `long` keeps one hot Claude process per thread and releases it after the idle window.',
+        'Usage: `!runtime <exec|long|status|default>`',
+        `Slash: \`${slashRef('runtime')} <exec|long|status|default>\``,
+        '`exec` keeps one process per request. `long` keeps one hot Claude process per thread and releases it after the idle window.',
       ].join('\n');
     }
     return [
-      '用法：`!runtime <normal|long|status|default>`',
-      `Slash：\`${slashRef('runtime')} <normal|long|status|default>\``,
-      '`normal` 保留原来的每轮启动方式。`long` 会让每个 thread 保留一个热 Claude 进程，空闲到期后释放。',
+      '用法：`!runtime <exec|long|status|default>`',
+      `Slash：\`${slashRef('runtime')} <exec|long|status|default>\``,
+      '`exec` 保留每轮启动方式。`long` 会让每个 thread 保留一个热 Claude 进程，空闲到期后释放。',
     ].join('\n');
   }
 
   function formatRuntimeModeConfigReport(language, provider, runtimeModeSetting, changed = false) {
     if (!runtimeModeSetting?.supported) {
       return language === 'en'
-        ? `⚠️ Current provider ${getProviderDisplayName(provider)} does not support Claude runtime mode.`
-        : `⚠️ 当前 provider ${getProviderDisplayName(provider)} 不支持 Claude runtime mode。`;
+        ? `⚠️ Current provider ${getProviderDisplayName(provider)} does not expose runtime mode switching yet.`
+        : `⚠️ 当前 provider ${getProviderDisplayName(provider)} 暂未开放运行时切换。`;
     }
     const label = `${formatRuntimeModeLabel(runtimeModeSetting.mode, language)} (${formatSettingSourceLabel(runtimeModeSetting.source, language)})`;
     if (language === 'en') {
       return [
-        changed ? '✅ Claude runtime updated' : 'ℹ️ Claude runtime',
+        changed ? '✅ Runtime updated' : 'ℹ️ Runtime',
         `• status: ${label}`,
         '• note: switching mode keeps the bound session id; any hot process in this thread is restarted on the next run.',
       ].join('\n');
     }
     return [
-      changed ? '✅ Claude runtime 已更新' : 'ℹ️ 当前 Claude runtime',
+      changed ? '✅ 运行时已更新' : 'ℹ️ 当前运行时',
       `• 状态：${label}`,
       '• 说明：切换方式不会清掉绑定的 session id；当前 thread 的热进程会在下次运行时按新配置重启。',
     ].join('\n');

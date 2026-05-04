@@ -227,6 +227,14 @@ function createPanel({ session, botProvider = null, openWorkspaceBrowser, comman
           || (currentSession?.runtimeMode ? 'session override' : 'env default'),
       }
       : { mode: 'normal', supported: false, source: 'provider unsupported' },
+    resolveBusyPromptModeSetting: (currentSession) => ({
+      mode: currentSession?.busyPromptMode === 'steer_if_possible' ? 'queue' : (currentSession?.busyPromptMode || 'queue'),
+      requestedMode: currentSession?.busyPromptMode || 'queue',
+      canSteer: false,
+      supported: true,
+      source: currentSession?.busyPromptMode ? 'session override' : 'built-in default',
+      reason: currentSession?.busyPromptMode === 'steer_if_possible' ? 'steer unavailable' : null,
+    }),
     resolveCompactStrategySetting: (currentSession) => ({
       strategy: currentSession?.compactStrategy || 'native',
       source: currentSession?.compactStrategy ? 'session override' : 'env default',
@@ -457,11 +465,23 @@ test('createSettingsPanel updates Claude runtime mode and closes the hot process
       supported: true,
       source: currentSession.runtimeMode ? 'session override' : 'env default',
     }),
+    resolveBusyPromptModeSetting: (currentSession) => ({
+      mode: currentSession.busyPromptMode === 'steer_if_possible' ? 'queue' : (currentSession.busyPromptMode || 'queue'),
+      requestedMode: currentSession.busyPromptMode || 'queue',
+      canSteer: false,
+      supported: true,
+      source: currentSession.busyPromptMode ? 'session override' : 'built-in default',
+      reason: currentSession.busyPromptMode === 'steer_if_possible' ? 'steer unavailable' : null,
+    }),
     resolveCompactStrategySetting: () => ({ strategy: 'native', source: 'env default' }),
     commandActions: {
       setRuntimeMode(currentSession, mode) {
         currentSession.runtimeMode = mode;
         return { runtimeMode: mode };
+      },
+      setBusyPromptMode(currentSession, mode) {
+        currentSession.busyPromptMode = mode === 'steer' ? 'steer_if_possible' : mode;
+        return { busyPromptMode: currentSession.busyPromptMode };
       },
     },
     closeRuntimeSession: (key, reason) => {
@@ -488,8 +508,57 @@ test('createSettingsPanel updates Claude runtime mode and closes the hot process
   assert.equal(session.runtimeMode, 'long');
   assert.equal(session.runnerSessionId, 'sess-claude');
   assert.deepEqual(closed, [{ key: 'thread-1', reason: 'runtime config changed' }]);
-  assert.match(updates[0].content, /当前项：Claude Runtime/);
-  assert.match(updates[0].content, /Claude runtime：long/);
+  assert.match(updates[0].content, /当前项：运行时/);
+  assert.match(updates[0].content, /运行时：long/);
+  assert.match(updates[0].content, /运行中消息：排队/);
+});
+
+test('createSettingsPanel keeps steer disabled when runtime cannot actually steer', async () => {
+  const session = {
+    provider: 'claude',
+    language: 'zh',
+    mode: 'safe',
+    runtimeMode: 'long',
+    busyPromptMode: null,
+  };
+  const actualPanel = createPanel({
+    session,
+    commandActions: {
+      setBusyPromptMode(currentSession, mode) {
+        currentSession.busyPromptMode = mode === 'steer' ? 'steer_if_possible' : mode;
+        return { busyPromptMode: currentSession.busyPromptMode };
+      },
+    },
+  });
+  const payload = actualPanel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'runtime',
+  });
+  const busyRow = payload.components[2];
+  const steerButton = busyRow.components.find((component) => component.data.customId === 'stg:set:busy_prompt:steer:12345');
+  assert.equal(steerButton.data.disabled, true);
+
+  const updates = [];
+  await actualPanel.handleSettingsPanelInteraction({
+    customId: 'stg:set:busy_prompt:queue:12345',
+    channelId: 'thread-1',
+    channel: { id: 'thread-1' },
+    user: { id: '12345' },
+    async update(payload) {
+      updates.push(payload);
+    },
+    async reply() {
+      throw new Error('should not reply');
+    },
+    async showModal() {
+      throw new Error('should not show modal');
+    },
+  });
+
+  assert.equal(session.busyPromptMode, 'queue');
+  assert.match(updates[0].content, /运行中消息：排队/);
 });
 
 test('createSettingsPanel shows parent channel as the inherited fast mode source for threads', () => {

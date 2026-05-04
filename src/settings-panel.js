@@ -1,4 +1,9 @@
-import { formatCodexProfileLabel, formatReplyDeliveryModeLabel, parseCompactConfigAction } from './session-settings.js';
+import {
+  formatBusyPromptModeLabel,
+  formatCodexProfileLabel,
+  formatReplyDeliveryModeLabel,
+  parseCompactConfigAction,
+} from './session-settings.js';
 
 const SETTINGS_COMPONENT_PREFIX = 'stg';
 const SETTINGS_MODAL_PREFIX = 'stgm';
@@ -71,7 +76,7 @@ function formatFastModeLabel(enabled, language) {
 function formatRuntimeModeLabel(mode, language) {
   return mode === 'long'
     ? (language === 'en' ? 'long (hot session)' : 'long（热会话）')
-    : (language === 'en' ? 'normal (per request)' : 'normal（每轮启动）');
+    : (language === 'en' ? 'exec (per request)' : 'exec（每轮启动）');
 }
 
 function formatWorkspaceLabel(binding, language) {
@@ -144,7 +149,7 @@ function formatSectionTitleLabel(section, language) {
     profile: { en: 'Codex Profile', zh: 'Codex Profile' },
     model: { en: 'Model', zh: '模型' },
     fast: { en: 'Fast Mode', zh: 'Fast Mode' },
-    runtime: { en: 'Claude Runtime', zh: 'Claude Runtime' },
+    runtime: { en: 'Runtime', zh: '运行时' },
     effort: { en: 'Reasoning Effort', zh: '推理力度' },
     compact: { en: 'Context Compaction', zh: '上下文压缩' },
     reply: { en: 'Reply Delivery', zh: '回复方式' },
@@ -305,6 +310,7 @@ export function createSettingsPanel({
   resolveReasoningEffortSetting = (session) => ({ value: session?.effort || '(provider default)', source: session?.effort ? 'session override' : 'provider' }),
   resolveFastModeSetting = () => ({ enabled: false, supported: false, source: 'provider unsupported' }),
   resolveRuntimeModeSetting = () => ({ mode: 'normal', supported: false, source: 'provider unsupported' }),
+  resolveBusyPromptModeSetting = () => ({ mode: 'queue', requestedMode: 'queue', canSteer: false, supported: true, source: 'built-in default', reason: null }),
   resolveCompactStrategySetting = () => ({ strategy: 'native', source: 'env default' }),
   resolveCompactThresholdSetting = () => ({ tokens: 0, source: 'env default' }),
   resolveReplyDeliverySetting = () => ({ mode: 'card_mention', source: 'env default' }),
@@ -329,7 +335,7 @@ export function createSettingsPanel({
     if (provider === 'codex') sections.push('profile');
     sections.push('model');
     if (provider === 'codex') sections.push('fast');
-    if (provider === 'claude') sections.push('runtime');
+    if (provider === 'codex' || provider === 'claude') sections.push('runtime');
     if (getSupportedReasoningEffortLevels(provider).length) sections.push('effort');
     sections.push('compact', 'reply', 'language', 'mode', 'workspace');
     return sections;
@@ -357,6 +363,7 @@ export function createSettingsPanel({
     const effortSetting = resolveReasoningEffortSetting(session);
     const fastMode = resolveFastModeSetting(session);
     const runtimeMode = resolveRuntimeModeSetting(session);
+    const busyPromptMode = resolveBusyPromptModeSetting(session);
     const compact = resolveCompactStrategySetting(session);
     const compactThreshold = resolveCompactThresholdSetting(session);
     const replyDelivery = resolveReplyDeliverySetting(session);
@@ -376,6 +383,7 @@ export function createSettingsPanel({
       codexProfileDefault,
       fastMode,
       runtimeMode,
+      busyPromptMode,
       compact,
       compactThreshold,
       replyDelivery,
@@ -600,9 +608,13 @@ export function createSettingsPanel({
         const selected = snapshot.runtimeMode.source === 'session override'
           ? snapshot.runtimeMode.mode
           : 'follow';
+        const busySelected = snapshot.busyPromptMode.source === 'session override'
+          ? snapshot.busyPromptMode.requestedMode
+          : 'follow';
         const followLabel = snapshot.isThread
           ? (snapshot.language === 'en' ? 'Follow parent/global' : '跟随父频道/全局')
           : (snapshot.language === 'en' ? 'Follow default' : '跟随默认');
+        const steerDisabled = !snapshot.busyPromptMode.canSteer;
         return [
           new ActionRowBuilder().addComponents(
             new ButtonBuilder()
@@ -611,12 +623,28 @@ export function createSettingsPanel({
               .setStyle(selected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
             new ButtonBuilder()
               .setCustomId(buildSettingsComponentId('set', 'runtime', 'normal', userId))
-              .setLabel('normal')
+              .setLabel('exec')
               .setStyle(selected === 'normal' ? ButtonStyle.Primary : ButtonStyle.Secondary),
             new ButtonBuilder()
               .setCustomId(buildSettingsComponentId('set', 'runtime', 'long', userId))
               .setLabel('long')
-              .setStyle(selected === 'long' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+              .setStyle(selected === 'long' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+              .setDisabled(!snapshot.runtimeMode.supported),
+          ),
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(buildSettingsComponentId('set', 'busy_prompt', 'follow', userId))
+              .setLabel(followLabel)
+              .setStyle(busySelected === 'follow' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(buildSettingsComponentId('set', 'busy_prompt', 'queue', userId))
+              .setLabel(snapshot.language === 'en' ? 'queue' : '排队')
+              .setStyle(busySelected === 'queue' ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            new ButtonBuilder()
+              .setCustomId(buildSettingsComponentId('set', 'busy_prompt', 'steer', userId))
+              .setLabel(snapshot.language === 'en' ? 'steer' : 'steer')
+              .setStyle(busySelected === 'steer_if_possible' ? ButtonStyle.Primary : ButtonStyle.Secondary)
+              .setDisabled(steerDisabled),
           ),
         ];
       }
@@ -767,8 +795,8 @@ function formatOverviewSection(snapshot) {
             : 'Fast mode 仅对 Codex 生效。选择“跟随全局”表示当前频道不再覆盖，改为继承 `~/.codex/config.toml`；若未显式写 `[features].fast_mode = false`，默认保持开启。');
       case 'runtime':
         return snapshot.language === 'en'
-          ? 'Claude runtime controls how this channel talks to Claude Code. `normal` keeps the old request path. `long` keeps a hot process per thread and resumes the same bound session id.'
-          : 'Claude runtime 决定这个频道如何接入 Claude Code。`normal` 保留原来的请求方式。`long` 为每个 thread 保留热进程，并继续使用同一个绑定 session id。';
+          ? 'Runtime chooses exec or long connection. Busy prompt decides what happens when a new message arrives during an active turn. Exec can only queue; steer stays disabled until the provider runner exposes a real active-turn steering path.'
+          : '运行时选择 exec 或 long。运行中消息决定任务还在跑时新消息怎么处理。exec 只能排队；steer 只有真正接好运行中插入能力后才会启用。';
       case 'effort':
         return snapshot.language === 'en'
           ? 'Reasoning effort options are provider-specific. "default" clears this channel override.'
@@ -856,9 +884,14 @@ function formatOverviewSection(snapshot) {
               : '• fast mode：不适用（仅 Codex）'),
           snapshot.runtimeMode.supported
             ? (snapshot.language === 'en'
-              ? `• Claude runtime: ${formatRuntimeModeLabel(snapshot.runtimeMode.mode, snapshot.language)} (${formatSettingSourceLabel(snapshot.runtimeMode.source, snapshot.language)})`
-              : `• Claude runtime：${formatRuntimeModeLabel(snapshot.runtimeMode.mode, snapshot.language)}（${formatSettingSourceLabel(snapshot.runtimeMode.source, snapshot.language)}）`)
-            : null,
+              ? `• runtime: ${formatRuntimeModeLabel(snapshot.runtimeMode.mode, snapshot.language)} (${formatSettingSourceLabel(snapshot.runtimeMode.source, snapshot.language)})`
+              : `• 运行时：${formatRuntimeModeLabel(snapshot.runtimeMode.mode, snapshot.language)}（${formatSettingSourceLabel(snapshot.runtimeMode.source, snapshot.language)}）`)
+            : (snapshot.language === 'en'
+              ? '• runtime: exec (long unavailable for this provider)'
+              : '• 运行时：exec（当前 provider 暂未接入 long）'),
+          snapshot.language === 'en'
+            ? `• busy prompt: ${formatBusyPromptModeLabel(snapshot.busyPromptMode.mode, snapshot.language)} (${formatSettingSourceLabel(snapshot.busyPromptMode.source, snapshot.language)}${snapshot.busyPromptMode.reason ? `, ${snapshot.busyPromptMode.reason}` : ''})`
+            : `• 运行中消息：${formatBusyPromptModeLabel(snapshot.busyPromptMode.mode, snapshot.language)}（${formatSettingSourceLabel(snapshot.busyPromptMode.source, snapshot.language)}${snapshot.busyPromptMode.reason ? `，${snapshot.busyPromptMode.reason}` : ''}）`,
           snapshot.effortLevels.length
             ? (snapshot.language === 'en'
               ? `• effort: ${formatValueLabel(snapshot.effortValue, '(provider default)', snapshot.language)} (${formatSettingSourceLabel(snapshot.effortSource, snapshot.language)})`
@@ -1276,6 +1309,9 @@ function formatOverviewSection(snapshot) {
         const next = parsed.value === 'follow' ? null : parsed.value;
         commandActions.setRuntimeMode?.(session, next);
         closeRuntimeForKey(key);
+      } else if (parsed.target === 'busy_prompt') {
+        const next = parsed.value === 'follow' ? null : parsed.value;
+        commandActions.setBusyPromptMode?.(session, next);
       } else if (parsed.target === 'default_effort') {
         commandActions.setGlobalReasoningEffortDefault?.(session, parsed.value);
       } else if (parsed.target === 'effort' || parsed.target === 'model_effort' || parsed.target === 'quick_model_effort') {
@@ -1306,6 +1342,8 @@ function formatOverviewSection(snapshot) {
         userId: interaction.user.id,
         activeSection: parsed.target === 'default_reply'
           ? 'reply'
+          : (parsed.target === 'busy_prompt')
+            ? 'runtime'
           : (parsed.target === 'model' && parsed.value === 'preset')
             ? 'model'
             : (parsed.target === 'model_effort')
