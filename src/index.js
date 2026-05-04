@@ -166,6 +166,8 @@ import {
   isIgnorableDiscordRuntimeError,
   isRecoverableGatewayCloseCode,
 } from './discord-lifecycle.js';
+import { createProjectUpgradeManager } from './project-upgrade.js';
+import { createProjectUpgradeScheduler } from './project-upgrade-scheduler.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -371,6 +373,26 @@ const CLAUDE_LONG_MAX_SESSIONS = Math.max(
   1,
   toInt(process.env.CLAUDE__LONG_MAX_SESSIONS || process.env.CLAUDE_LONG_MAX_SESSIONS, 8),
 );
+const PROJECT_UPGRADE_CHECK_INTERVAL_MS = normalizeIntervalMs(
+  process.env.AGENTS_IN_DISCORD_UPGRADE_CHECK_INTERVAL_MS,
+  6 * 60 * 60_000,
+  60_000,
+);
+const PROJECT_UPGRADE_INITIAL_DELAY_MS = normalizeIntervalMs(
+  process.env.AGENTS_IN_DISCORD_UPGRADE_INITIAL_DELAY_MS,
+  30_000,
+  1000,
+);
+const PROJECT_UPGRADE_NOTIFY_CHANNEL_IDS = parseCsvSet(
+  process.env.AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS || [...ALLOWED_CHANNEL_IDS].join(','),
+);
+const PROJECT_UPGRADE_RESTART_TARGET = String(
+  process.env.AGENTS_IN_DISCORD_UPGRADE_RESTART_TARGET || BOT_PROVIDER || 'all',
+).trim() || 'all';
+const PROJECT_UPGRADE_RESTART_COMMAND = process.env.AGENTS_IN_DISCORD_UPGRADE_RESTART_COMMAND
+  || (process.platform === 'win32'
+    ? ''
+    : `scripts/restart-discord-bot-service.sh ${PROJECT_UPGRADE_RESTART_TARGET}`);
 const SLASH_PREFIX = normalizeSlashPrefix(process.env.SLASH_PREFIX || getDefaultSlashPrefix(BOT_PROVIDER));
 const SPAWN_ENV = buildSpawnEnv(process.env);
 const getProviderBin = (provider) => getProviderBinBase(provider, {
@@ -391,6 +413,12 @@ const getProviderRateLimits = createCachedProviderRateLimitReader({
     spawnEnv: SPAWN_ENV,
     safeError,
   }),
+});
+const projectUpgradeManager = createProjectUpgradeManager({
+  projectRoot: ROOT,
+  env: process.env,
+  envFilePath: ENV_FILE,
+  restartCommand: PROJECT_UPGRADE_RESTART_COMMAND,
 });
 
 ensureDir(DATA_DIR);
@@ -656,6 +684,7 @@ const appContext = createAppContext({
       getSupportedReasoningEffortLevels,
       getCliHealth,
       getProviderRateLimits,
+      getProjectUpgradeStatus: (options = {}) => projectUpgradeManager.check(options),
       getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       formatCliHealth,
       formatLanguageLabel,
@@ -697,6 +726,19 @@ const appContext = createAppContext({
       parseTimeoutConfigAction,
       parseCompactConfigAction,
       parseExtraInfoConfigAction,
+      getProjectUpgradeStatus: (options = {}) => projectUpgradeManager.check(options),
+      setProjectUpgradeMode: projectUpgradeManager.setMode,
+      applyProjectUpgrade: () => projectUpgradeManager.apply({
+        restart: false,
+        requireIdle: () => {
+          const busy = appContext.promptRuntime.getAllRuntimeSnapshots()
+            .find((item) => item.running || Number(item.queued || 0) > 0);
+          return busy
+            ? { ok: false, error: `bot has running or queued work in ${busy.key}` }
+            : { ok: true };
+        },
+      }),
+      requestProjectUpgradeRestart: () => projectUpgradeManager.requestRestart(),
       resolvePath,
       forkCodexThread: (options) => forkCodexThread({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       resolveForkWorkspace: ({ provider, parentSessionId } = {}) => (
@@ -727,6 +769,19 @@ const appContext = createAppContext({
       parseTimeoutConfigAction,
       parseCompactConfigFromText,
       parseExtraInfoConfigFromText,
+      getProjectUpgradeStatus: (options = {}) => projectUpgradeManager.check(options),
+      setProjectUpgradeMode: projectUpgradeManager.setMode,
+      applyProjectUpgrade: () => projectUpgradeManager.apply({
+        restart: false,
+        requireIdle: () => {
+          const busy = appContext.promptRuntime.getAllRuntimeSnapshots()
+            .find((item) => item.running || Number(item.queued || 0) > 0);
+          return busy
+            ? { ok: false, error: `bot has running or queued work in ${busy.key}` }
+            : { ok: true };
+        },
+      }),
+      requestProjectUpgradeRestart: () => projectUpgradeManager.requestRestart(),
       parseConfigKey,
       parseReasoningEffortInput,
       parseWorkspaceCommandAction,
@@ -784,6 +839,18 @@ const appContext = createAppContext({
 });
 activeLifecycle = appContext.lifecycle;
 
+const projectUpgradeScheduler = createProjectUpgradeScheduler({
+  manager: projectUpgradeManager,
+  intervalMs: PROJECT_UPGRADE_CHECK_INTERVAL_MS,
+  initialDelayMs: PROJECT_UPGRADE_INITIAL_DELAY_MS,
+  notifyChannelIds: [...PROJECT_UPGRADE_NOTIFY_CHANNEL_IDS],
+  getClient: getActiveDiscordClient,
+  getRuntimeSnapshots: () => appContext.promptRuntime.getAllRuntimeSnapshots(),
+  requestRestart: () => projectUpgradeManager.requestRestart(),
+  stateFile: path.join(DATA_DIR, 'project-upgrade-notices.json'),
+  logger: console,
+});
+
 console.log([
   '🔐 Security defaults:',
   `• BOT_MODE=${BOT_MODE}`,
@@ -804,6 +871,7 @@ console.log([
   `• CONFIG_ALLOWLIST=${appContext.core.securityPolicy.describeConfigPolicy()}`,
   `• DEFAULT_UI_LANGUAGE=${DEFAULT_UI_LANGUAGE}`,
   `• DEFAULT_REPLY_DELIVERY_MODE=${formatReplyDeliveryModeLabel(resolveReplyDeliveryDefault().mode, DEFAULT_UI_LANGUAGE)}`,
+  `• PROJECT_UPGRADE_MODE=${projectUpgradeManager.resolveConfig().mode}`,
   `• ONBOARDING_ENABLED_DEFAULT=${ONBOARDING_ENABLED_BY_DEFAULT}`,
 ].join('\n'));
 
@@ -813,6 +881,7 @@ try {
     singleInstanceLock: appContext.singleInstanceLock,
     reason: 'startup',
   });
+  projectUpgradeScheduler.start();
 } catch (err) {
   console.error(`❌ Failed to boot Discord client: ${safeError(err)}`);
   process.exit(1);

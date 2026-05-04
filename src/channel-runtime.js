@@ -95,6 +95,13 @@ export function createChannelRuntimeStore({
     };
   }
 
+  function getAllRuntimeSnapshots() {
+    return [...channelStates.entries()].map(([key]) => ({
+      key,
+      ...getRuntimeSnapshot(key),
+    }));
+  }
+
   function rememberFailedPrompt(target, failedPrompt) {
     const state = resolveChannelState(target);
     state.lastFailedPrompt = failedPrompt || null;
@@ -116,6 +123,7 @@ export function createChannelRuntimeStore({
     cancelChannelWork,
     cancelAllChannelWork,
     getRuntimeSnapshot,
+    getAllRuntimeSnapshots,
     rememberFailedPrompt,
     clearLastFailedPrompt,
     getLastFailedPrompt,
