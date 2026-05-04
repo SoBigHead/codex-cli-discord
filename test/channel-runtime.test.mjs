@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
-import { createChannelRuntimeStore } from '../src/channel-runtime.js';
+import { createChannelRuntimeStore, stopChildProcess } from '../src/channel-runtime.js';
 
 test('createChannelRuntimeStore tracks active run and cancellation', () => {
   const store = createChannelRuntimeStore({
@@ -33,4 +34,69 @@ test('createChannelRuntimeStore tracks active run and cancellation', () => {
 
   const afterCancel = store.getRuntimeSnapshot('thread-1');
   assert.equal(afterCancel.queued, 0);
+});
+
+test('stopChildProcess escalates when SIGTERM does not close the process', async () => {
+  const signals = [];
+  const child = new EventEmitter();
+  child.killed = false;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = (signal) => {
+    signals.push(signal);
+    child.killed = true;
+    if (signal === 'SIGKILL') {
+      child.signalCode = signal;
+      child.emit('close', null, signal);
+    }
+    return true;
+  };
+
+  stopChildProcess(child, 5);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
+});
+
+test('stopChildProcess does not escalate after the process closes', async () => {
+  const signals = [];
+  const child = new EventEmitter();
+  child.killed = false;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = (signal) => {
+    signals.push(signal);
+    child.killed = true;
+    child.exitCode = 0;
+    child.emit('close', 0, null);
+    return true;
+  };
+
+  stopChildProcess(child, 5);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.deepEqual(signals, ['SIGTERM']);
+});
+
+test('stopChildProcess ignores duplicate stop requests while shutdown is pending', async () => {
+  const signals = [];
+  const child = new EventEmitter();
+  child.killed = false;
+  child.exitCode = null;
+  child.signalCode = null;
+  child.kill = (signal) => {
+    signals.push(signal);
+    child.killed = true;
+    if (signal === 'SIGKILL') {
+      child.signalCode = signal;
+      child.emit('close', null, signal);
+    }
+    return true;
+  };
+
+  stopChildProcess(child, 5);
+  stopChildProcess(child, 5);
+  await new Promise((resolve) => setTimeout(resolve, 25));
+
+  assert.deepEqual(signals, ['SIGTERM', 'SIGKILL']);
 });

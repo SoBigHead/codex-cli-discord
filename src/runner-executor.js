@@ -254,7 +254,7 @@ export function createRunnerExecutor({
           goalCompleted = goal;
           stoppedAfterGoalComplete = true;
           logs.push('Codex goal reached complete; stopping goal continuation runner.');
-          if (!child.killed) stopChildProcess(child);
+          stopChildProcess(child);
         } catch (err) {
           logs.push(`Codex goal monitor failed: ${safeError(err)}`);
         } finally {

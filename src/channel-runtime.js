@@ -1,3 +1,5 @@
+const STOP_CHILD_PROCESS_STATE = Symbol('agentsInDiscordStopChildProcessState');
+
 export function createChannelRuntimeStore({
   cloneProgressPlan,
   truncate,
@@ -131,15 +133,28 @@ export function createChannelRuntimeStore({
 }
 
 export function stopChildProcess(child, killGraceMs = 3000) {
-  if (!child || child.killed) return;
+  if (!child) return;
+  let exited = child.exitCode !== null && child.exitCode !== undefined;
+  exited = exited || Boolean(child.signalCode);
+  if (exited) return;
+  if (child[STOP_CHILD_PROCESS_STATE]?.stopping) return;
+  child[STOP_CHILD_PROCESS_STATE] = { stopping: true };
+  const markExited = () => {
+    exited = true;
+    if (child[STOP_CHILD_PROCESS_STATE]) {
+      child[STOP_CHILD_PROCESS_STATE].stopping = false;
+    }
+  };
+  child.once?.('exit', markExited);
+  child.once?.('close', markExited);
   try {
-    child.kill('SIGTERM');
+    child.kill?.('SIGTERM');
   } catch {
     return;
   }
   setTimeout(() => {
     try {
-      if (!child.killed) child.kill('SIGKILL');
+      if (!exited) child.kill?.('SIGKILL');
     } catch {
     }
   }, killGraceMs).unref?.();
