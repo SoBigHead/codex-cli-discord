@@ -331,12 +331,15 @@ export function createAppContext({
     isOnboardingButtonId: commandSurface.isOnboardingButtonId,
     isSettingsPanelComponentId: commandSurface.isSettingsPanelComponentId,
     isSettingsPanelModalId: commandSurface.isSettingsPanelModalId,
+    isGoalModalId: commandSurface.isGoalModalId,
     handleWorkspaceBusyInteraction: commandSurface.handleWorkspaceBusyInteraction,
     handleWorkspaceBrowserInteraction: commandSurface.handleWorkspaceBrowserInteraction,
     handleOnboardingButtonInteraction: commandSurface.handleOnboardingButtonInteraction,
     handleSettingsPanelInteraction: commandSurface.handleSettingsPanelInteraction,
     handleSettingsPanelModalSubmit: commandSurface.handleSettingsPanelModalSubmit,
+    handleGoalModalSubmit: commandSurface.handleGoalModalSubmit,
     routeSlashCommand: commandSurface.routeSlashCommand,
+    shouldDeferInteraction: (interaction, commandName) => !commandSurface.shouldHandleSlashCommandBeforeDefer?.({ interaction, commandName }),
     normalizeSlashCommandName: commandSurface.normalizeSlashCommandName,
   });
   const lifecycle = createDiscordLifecycleFn({

@@ -23,12 +23,15 @@ export function createDiscordEntryHandlers({
   isOnboardingButtonId,
   isSettingsPanelComponentId,
   isSettingsPanelModalId,
+  isGoalModalId,
   handleWorkspaceBusyInteraction,
   handleWorkspaceBrowserInteraction,
   handleOnboardingButtonInteraction,
   handleSettingsPanelInteraction,
   handleSettingsPanelModalSubmit,
+  handleGoalModalSubmit,
   routeSlashCommand,
+  shouldDeferInteraction = () => true,
   normalizeSlashCommandName,
 } = {}) {
   const {
@@ -258,7 +261,8 @@ export function createDiscordEntryHandlers({
 
     if (typeof interaction.isModalSubmit === 'function' && interaction.isModalSubmit()) {
       const isSettingsModal = isSettingsPanelModalId(interaction.customId);
-      if (!isSettingsModal) return;
+      const isGoalModal = isGoalModalId?.(interaction.customId);
+      if (!isSettingsModal && !isGoalModal) return;
       logger.log(`[interaction] kind=modal id=${interaction.customId} user=${interaction.user?.tag || interaction.user?.id || 'unknown'} channel=${interaction.channelId || 'unknown'}`);
       try {
         if (!isAllowedUser(interaction.user.id)) {
@@ -269,7 +273,11 @@ export function createDiscordEntryHandlers({
           await sendInteractionResponse(interaction, { content: '⛔ 当前频道未开放。', flags: 64 });
           return;
         }
-        await handleSettingsPanelModalSubmit(interaction);
+        if (isSettingsModal) {
+          await handleSettingsPanelModalSubmit(interaction);
+        } else {
+          await handleGoalModalSubmit(interaction);
+        }
       } catch (err) {
         logger.error(`interactionCreate modal handler error (${describeInteraction(interaction)}):`, err);
         await safeInteractionFailureReply(interaction, err);
@@ -285,23 +293,26 @@ export function createDiscordEntryHandlers({
     }
 
     try {
-      await withDiscordNetworkRetry(
-        () => interaction.deferReply({ flags: 64 }),
-        {
-          logger,
-          label: `${describeInteraction(interaction)} deferReply`,
-          maxAttempts: 3,
-          baseDelayMs: 75,
-        },
-      );
       const respond = (payload) => sendInteractionResponse(interaction, payload);
+      const cmd = normalizeSlashCommandName(interaction.commandName);
+
+      if (shouldDeferInteraction(interaction, cmd)) {
+        await withDiscordNetworkRetry(
+          () => interaction.deferReply({ flags: 64 }),
+          {
+            logger,
+            label: `${describeInteraction(interaction)} deferReply`,
+            maxAttempts: 3,
+            baseDelayMs: 75,
+          },
+        );
+      }
 
       if (!(await isAllowedInteractionChannel(interaction))) {
         await respond({ content: '⛔ 当前频道未开放。', flags: 64 });
         return;
       }
 
-      const cmd = normalizeSlashCommandName(interaction.commandName);
       const handled = await routeSlashCommand({
         interaction,
         commandName: cmd,
