@@ -314,16 +314,16 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
       description: '管理当前 Codex session 的持久目标；active 时会自动续跑',
       configure(builder) {
         return builder
-          .addSubcommand(s => s.setName('status').setDescription('查看当前 goal'))
-          .addSubcommand(s => s.setName('set').setDescription('设置 goal 并自动续跑')
-            .addStringOption(o => o.setName('objective').setDescription('目标').setRequired(true))
-            .addStringOption(o => o.setName('token_budget').setDescription('token 预算，如 120000；clear 清除预算').setRequired(false)))
-          .addSubcommand(s => s.setName('pause').setDescription('标记暂停'))
-          .addSubcommand(s => s.setName('resume').setDescription('标记进行中'))
-          .addSubcommand(s => s.setName('done').setDescription('标记完成'))
-          .addSubcommand(s => s.setName('clear').setDescription('清除 goal'))
-          .addSubcommand(s => s.setName('budget').setDescription('设置或清除预算')
-            .addStringOption(o => o.setName('token_budget').setDescription('token 预算，如 120000；clear 清除预算').setRequired(true)));
+          .addStringOption(o => o.setName('action').setDescription('goal 操作').setRequired(true)
+            .addChoices(
+              { name: 'status 查当前 goal', value: 'status' },
+              { name: 'set 设置 goal', value: 'set' },
+              { name: 'pause 标记暂停', value: 'pause' },
+              { name: 'resume 标记进行中', value: 'resume' },
+              { name: 'done 标记完成', value: 'done' },
+              { name: 'clear 清除 goal', value: 'clear' },
+              { name: 'budget 设置预算', value: 'budget' },
+            ));
       },
     },
     {

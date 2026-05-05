@@ -23,6 +23,9 @@ import {
 
 const ACTION_BUTTON_PREFIX = 'cmd';
 const ACTION_BUTTON_COMMANDS = new Set(getActionButtonCommandNames());
+const GOAL_MODAL_PREFIX = 'goalm';
+const GOAL_OBJECTIVE_INPUT_ID = 'goal_objective';
+const GOAL_TOKEN_BUDGET_INPUT_ID = 'goal_token_budget';
 
 function isExistingDirectory(dir) {
   try {
@@ -88,6 +91,9 @@ export function createSlashCommandRouter({
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
   getSession,
   getSessionLanguage,
   getSessionProvider,
@@ -163,6 +169,83 @@ export function createSlashCommandRouter({
   safeError,
 } = {}) {
   const handlers = new Map();
+  const formatError = (err) => (typeof safeError === 'function' ? safeError(err) : String(err?.message || err));
+
+  function buildGoalModalId(action, userId) {
+    return `${GOAL_MODAL_PREFIX}:${String(action || '').trim().toLowerCase()}:${String(userId || '').trim()}`;
+  }
+
+  function parseGoalModalId(customId) {
+    const match = /^goalm:(set|budget):([a-z0-9_-]{1,64})$/i.exec(String(customId || '').trim());
+    if (!match) return null;
+    return {
+      action: match[1].toLowerCase(),
+      userId: match[2],
+    };
+  }
+
+  function isGoalModalId(customId) {
+    return Boolean(parseGoalModalId(customId));
+  }
+
+  function canShowGoalModal() {
+    return ModalBuilder && TextInputBuilder && TextInputStyle && ActionRowBuilder;
+  }
+
+  function buildGoalSetModal(userId) {
+    const objectiveInput = new TextInputBuilder()
+      .setCustomId(GOAL_OBJECTIVE_INPUT_ID)
+      .setLabel('目标')
+      .setStyle(TextInputStyle.Paragraph)
+      .setPlaceholder('写清楚要持续推进到什么交付结果')
+      .setRequired(true)
+      .setMaxLength(4000);
+    const budgetInput = new TextInputBuilder()
+      .setCustomId(GOAL_TOKEN_BUDGET_INPUT_ID)
+      .setLabel('token 预算，可留空')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('例如 120000；clear 表示清除预算')
+      .setRequired(false)
+      .setMaxLength(32);
+    return new ModalBuilder()
+      .setCustomId(buildGoalModalId('set', userId))
+      .setTitle('设置 Codex goal')
+      .addComponents(
+        new ActionRowBuilder().addComponents(objectiveInput),
+        new ActionRowBuilder().addComponents(budgetInput),
+      );
+  }
+
+  function buildGoalBudgetModal(userId) {
+    const budgetInput = new TextInputBuilder()
+      .setCustomId(GOAL_TOKEN_BUDGET_INPUT_ID)
+      .setLabel('token 预算')
+      .setStyle(TextInputStyle.Short)
+      .setPlaceholder('例如 120000；clear 表示清除预算')
+      .setRequired(true)
+      .setMaxLength(32);
+    return new ModalBuilder()
+      .setCustomId(buildGoalModalId('budget', userId))
+      .setTitle('设置 Codex goal 预算')
+      .addComponents(
+        new ActionRowBuilder().addComponents(budgetInput),
+      );
+  }
+
+  function getModalTextValue(fields, customId) {
+    try {
+      return String(fields?.getTextInputValue?.(customId) || '');
+    } catch {
+      return '';
+    }
+  }
+
+  function shouldHandleBeforeDefer({ interaction, commandName } = {}) {
+    const normalizedCommand = normalizeCommandName(commandName || interaction?.commandName || '');
+    if (normalizedCommand !== 'goal') return false;
+    const action = String(interaction?.options?.getString?.('action') || '').trim().toLowerCase();
+    return action === 'set' || action === 'budget';
+  }
 
   async function maybeEnqueueCodexGoalContinuation({ action, result, interaction, key, session }) {
     if (!shouldStartCodexGoalContinuation(action, result)) return result;
@@ -653,13 +736,22 @@ export function createSlashCommandRouter({
   registerSlashHandlers(handlers, ['goal'], async ({ interaction, key, session, respond }) => {
     const language = getSessionLanguage(session);
     const provider = getSessionProvider(session);
-    const subcommand = typeof interaction.options.getSubcommand === 'function'
-      ? interaction.options.getSubcommand(false)
-      : null;
+    const rawAction = String(interaction.options.getString('action') || 'status').trim().toLowerCase();
+    if (rawAction === 'set' || rawAction === 'budget') {
+      if (!canShowGoalModal() || typeof interaction.showModal !== 'function') {
+        await respond({
+          content: '❌ 当前环境不支持 goal 输入弹窗。',
+          flags: 64,
+        });
+        return;
+      }
+      await interaction.showModal(rawAction === 'set'
+        ? buildGoalSetModal(interaction.user?.id)
+        : buildGoalBudgetModal(interaction.user?.id));
+      return;
+    }
     const action = parseCodexGoalSlashInput({
-      action: subcommand || interaction.options.getString('action') || 'status',
-      objective: interaction.options.getString('objective') || '',
-      tokenBudget: interaction.options.getString('token_budget') || '',
+      action: rawAction,
     });
     try {
       const result = await executeCodexGoalAction({
@@ -689,6 +781,61 @@ export function createSlashCommandRouter({
       });
     }
   });
+
+  async function handleGoalModalSubmit(interaction) {
+    const parsed = parseGoalModalId(interaction.customId);
+    if (!parsed) return false;
+    const key = interaction.channelId || interaction.channel?.id;
+    const session = getSession(key, { channel: interaction.channel || null });
+    const language = getSessionLanguage(session);
+    if (String(interaction.user?.id || '') !== parsed.userId) {
+      await interaction.reply({
+        content: '⛔ 这个 goal 输入框属于另一个用户。',
+        flags: 64,
+      });
+      return true;
+    }
+
+    const action = parsed.action === 'set'
+      ? parseCodexGoalSlashInput({
+        action: 'set',
+        objective: getModalTextValue(interaction.fields, GOAL_OBJECTIVE_INPUT_ID),
+        tokenBudget: getModalTextValue(interaction.fields, GOAL_TOKEN_BUDGET_INPUT_ID),
+      })
+      : parseCodexGoalSlashInput({
+        action: 'budget',
+        tokenBudget: getModalTextValue(interaction.fields, GOAL_TOKEN_BUDGET_INPUT_ID),
+      });
+
+    try {
+      const result = await executeCodexGoalAction({
+        action,
+        session,
+        provider: getSessionProvider(session),
+        getSessionId,
+        getCodexThreadGoal,
+        setCodexThreadGoal,
+        clearCodexThreadGoal,
+      });
+      const withContinuation = await maybeEnqueueCodexGoalContinuation({
+        action,
+        result,
+        interaction,
+        key,
+        session,
+      });
+      await interaction.reply({
+        content: formatCodexGoalResult(withContinuation, language),
+        flags: 64,
+      });
+    } catch (err) {
+      await interaction.reply({
+        content: `❌ Codex goal 失败：${formatError(err)}`,
+        flags: 64,
+      });
+    }
+    return true;
+  }
 
   registerSlashHandlers(handlers, ['name'], async ({ interaction, session, respond }) => {
     const label = interaction.options.getString('label').trim();
@@ -897,7 +1044,7 @@ export function createSlashCommandRouter({
     });
   });
 
-  return async function routeSlashCommand({ interaction, commandName, respond } = {}) {
+  async function routeSlashCommand({ interaction, commandName, respond } = {}) {
     const key = interaction?.channelId;
     if (!key) {
       await respond({ content: '❌ 无法识别当前频道。', flags: 64 });
@@ -917,5 +1064,10 @@ export function createSlashCommandRouter({
       respond,
     });
     return true;
-  };
+  }
+
+  routeSlashCommand.isGoalModalId = isGoalModalId;
+  routeSlashCommand.handleGoalModalSubmit = handleGoalModalSubmit;
+  routeSlashCommand.shouldHandleBeforeDefer = shouldHandleBeforeDefer;
+  return routeSlashCommand;
 }
