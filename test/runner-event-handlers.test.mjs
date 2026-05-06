@@ -95,6 +95,63 @@ test('handleCodexRunnerEvent keeps commentary item.completed out of final answer
   assert.deepEqual(state.finalAnswerMessages, []);
 });
 
+test('handleCodexRunnerEvent captures final answer from bridged session events', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+
+  handleCodexRunnerEvent({
+    type: 'event_msg',
+    payload: {
+      type: 'agent_message',
+      message: '桥接来的最终总结。',
+      phase: 'final_answer',
+    },
+  }, state, () => {}, {
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+  });
+
+  handleCodexRunnerEvent({
+    type: 'response_item',
+    payload: {
+      type: 'message',
+      role: 'assistant',
+      content: [
+        { type: 'output_text', text: 'response item 最终总结。' },
+      ],
+      phase: 'final_answer',
+    },
+  }, state, () => {}, {
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+  });
+
+  handleCodexRunnerEvent({
+    type: 'event_msg',
+    payload: {
+      type: 'task_complete',
+      last_agent_message: 'task complete 最终总结。',
+    },
+  }, state, () => {}, {
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+  });
+
+  assert.deepEqual(state.finalAnswerMessages, [
+    '桥接来的最终总结。',
+    'response item 最终总结。',
+    'task complete 最终总结。',
+  ]);
+  assert.deepEqual(state.messages, []);
+});
+
 test('handleGeminiRunnerEvent captures init, delta messages, and result stats', () => {
   const state = {
     messages: [],

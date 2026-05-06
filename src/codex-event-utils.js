@@ -55,6 +55,7 @@ export function extractAgentMessageText(item) {
     item.text,
     item.output_text,
     item.input_text,
+    item.message,
   ])
     || (item.message && typeof item.message === 'object' ? extractAgentMessageText(item.message) : '')
     || pickFirstTextFromContent(item.content);

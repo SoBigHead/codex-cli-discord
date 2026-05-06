@@ -181,6 +181,7 @@ test('createRunnerExecutor stops Codex goal continuation when official goal stat
     sessionKey: 'discord-thread-1',
     workspaceDir: '/tmp/workspace',
     prompt: CODEX_GOAL_CONTINUATION_PROMPT,
+    onEvent: () => {},
   });
 
   assert.equal(killed, true);
@@ -258,9 +259,98 @@ test('createRunnerExecutor lets Codex goal completion emit its final summary bef
     sessionKey: 'discord-thread-1',
     workspaceDir: '/tmp/workspace',
     prompt: CODEX_GOAL_CONTINUATION_PROMPT,
+    onEvent: () => {},
   });
 
   assert.equal(killed, false);
   assert.equal(result.ok, true);
   assert.deepEqual(result.finalAnswerMessages, ['完整总结：验证细节和剩余事项都在这里。']);
+});
+
+test('createRunnerExecutor collects Codex goal final output from bridged session events', async () => {
+  let killed = false;
+  let bridgeOnEvent = null;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => {
+    killed = true;
+    child.killed = true;
+    queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+  };
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: (value) => String(value || '').trim().toLowerCase(),
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'codex',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveFastModeSetting: () => ({ enabled: true, source: 'config.toml' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    startSessionProgressBridge: ({ onEvent: nextOnEvent }) => {
+      bridgeOnEvent = nextOnEvent;
+      return () => {};
+    },
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    codexGoalMonitorIntervalMs: 1,
+    codexGoalCompletionGraceMs: 20,
+    async getCodexThreadGoal({ threadId }) {
+      return {
+        goal: {
+          threadId,
+          objective: 'ship goal mode',
+          status: 'complete',
+        },
+      };
+    },
+    spawnFn: () => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"thread.started","thread_id":"goal-thread-1"}',
+          '',
+        ].join('\n')));
+      });
+      setTimeout(() => {
+        bridgeOnEvent?.({
+          type: 'event_msg',
+          payload: {
+            type: 'agent_message',
+            message: '桥接总结：过程、验证和结果都在这里。',
+            phase: 'final_answer',
+          },
+        });
+        bridgeOnEvent?.({
+          type: 'event_msg',
+          payload: {
+            type: 'task_complete',
+            last_agent_message: '桥接总结：过程、验证和结果都在这里。',
+          },
+        });
+      }, 5);
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'goal-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: CODEX_GOAL_CONTINUATION_PROMPT,
+    onEvent: () => {},
+  });
+
+  assert.equal(killed, true);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.finalAnswerMessages, ['桥接总结：过程、验证和结果都在这里。']);
 });

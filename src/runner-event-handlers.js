@@ -33,6 +33,14 @@ export function handleCodexRunnerEvent(event, state, ensureSessionBridge, {
   extractAgentMessageText = () => '',
   isFinalAnswerLikeAgentMessage = () => true,
 } = {}) {
+  const eventType = String(event?.type || '').trim();
+  if ((eventType === 'event_msg' || eventType === 'response_item') && event?.payload && typeof event.payload === 'object') {
+    return handleCodexRunnerEvent(event.payload, state, ensureSessionBridge, {
+      extractAgentMessageText,
+      isFinalAnswerLikeAgentMessage,
+    });
+  }
+
   switch (event.type) {
     case 'thread.started':
     case 'thread.created':
@@ -53,16 +61,30 @@ export function handleCodexRunnerEvent(event, state, ensureSessionBridge, {
       if (!['agent_message', 'assistant_message', 'message'].includes(itemType)) break;
       const text = extractAgentMessageText(item);
       if (!text) break;
-      if (isFinalAnswerLikeAgentMessage(item)) state.finalAnswerMessages.push(text);
-      else state.messages.push(text);
+      if (isFinalAnswerLikeAgentMessage(item)) appendUniqueText(state.finalAnswerMessages, text);
+      else appendUniqueText(state.messages, text);
       break;
     }
     case 'assistant.message.delta':
     case 'assistant.message': {
       const text = extractAgentMessageText(event);
       if (!text) break;
-      if (isFinalAnswerLikeAgentMessage(event)) state.finalAnswerMessages.push(text);
-      else state.messages.push(text);
+      if (isFinalAnswerLikeAgentMessage(event)) appendUniqueText(state.finalAnswerMessages, text);
+      else appendUniqueText(state.messages, text);
+      break;
+    }
+    case 'agent_message':
+    case 'assistant_message':
+    case 'message': {
+      const text = extractAgentMessageText(event);
+      if (!text) break;
+      if (isFinalAnswerLikeAgentMessage(event)) appendUniqueText(state.finalAnswerMessages, text);
+      else appendUniqueText(state.messages, text);
+      break;
+    }
+    case 'task_complete': {
+      const text = String(event.last_agent_message || '').trim();
+      if (text) appendUniqueText(state.finalAnswerMessages, text);
       break;
     }
     case 'reasoning.delta':

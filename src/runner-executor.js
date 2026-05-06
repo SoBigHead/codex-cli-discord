@@ -308,7 +308,8 @@ export function createRunnerExecutor({
           threadId: id,
           workspaceDir,
           onEvent: (ev) => {
-            if (normalizeProvider(provider) === 'claude') {
+            const normalizedProvider = normalizeProvider(provider);
+            if (normalizedProvider === 'claude' || normalizedProvider === 'codex') {
               handleEvent(ev);
             }
             options.onEvent?.(ev);
