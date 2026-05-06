@@ -22,7 +22,7 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, an
 - Self-healing runtime: auto relogin with backoff after transient Discord/runtime failures
 - Workspace-level serialization so the same workspace is never executed concurrently across channels/bots
 - Two modes:
-  - `safe` → `codex exec --full-auto` (sandboxed)
+  - `safe` → sandboxed Codex exec (`--sandbox workspace-write` + `approval_policy=on-request`)
   - `dangerous` → `--dangerously-bypass-approvals-and-sandbox` (full access)
 - Optional proxies (Clash / corp proxy): REST via `HTTP_PROXY`, Gateway WS via `SOCKS_PROXY`
 - Lightweight UX:

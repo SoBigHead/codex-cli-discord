@@ -38,7 +38,7 @@ test('runtime presentation formats runtime/session/permission labels', () => {
   );
   assert.equal(
     presentation.formatPermissionsLabel({ provider: 'codex', mode: 'safe' }, 'zh'),
-    '沙盒自动审查（workspace-write，approval auto_review）',
+    '沙盒模式（workspace-write，approval_policy=on-request）',
   );
 });
 

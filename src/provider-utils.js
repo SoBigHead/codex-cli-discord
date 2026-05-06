@@ -84,7 +84,7 @@ function buildCodexArgs({
   compactOnThreshold,
   modelAutoCompactTokenLimit,
 }) {
-  const common = ['--enable', 'goals'];
+  const common = [];
   if (model) common.push('-m', model);
   if (effort) common.push('-c', `model_reasoning_effort="${effort}"`);
   if (typeof fastMode === 'boolean') {

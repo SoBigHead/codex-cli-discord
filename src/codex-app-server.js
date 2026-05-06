@@ -269,11 +269,9 @@ export async function forkCodexThread(options = {}) {
 }
 
 function createGoalClient(options = {}) {
-  const enabledFeatures = new Set(options.enabledFeatures || []);
-  enabledFeatures.add('goals');
   return createCodexAppServerClient({
     ...options,
-    enabledFeatures: [...enabledFeatures],
+    enabledFeatures: options.enabledFeatures || [],
   });
 }
 

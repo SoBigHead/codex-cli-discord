@@ -7,8 +7,6 @@ const CODEX_SAFE_FRESH_PERMISSION_ARGS = Object.freeze([
   'workspace-write',
   '-c',
   'approval_policy="on-request"',
-  '-c',
-  'approvals_reviewer="auto_review"',
 ]);
 
 const CODEX_SAFE_RESUME_PERMISSION_ARGS = Object.freeze([
@@ -16,8 +14,6 @@ const CODEX_SAFE_RESUME_PERMISSION_ARGS = Object.freeze([
   'sandbox_mode="workspace-write"',
   '-c',
   'approval_policy="on-request"',
-  '-c',
-  'approvals_reviewer="auto_review"',
 ]);
 
 export function buildCodexPermissionArgs(mode, { resume = false } = {}) {
@@ -33,6 +29,6 @@ export function formatCodexPermissionsLabel(mode, language = 'en') {
       : '完全权限（--dangerously-bypass-approvals-and-sandbox）';
   }
   return language === 'en'
-    ? 'sandboxed auto-review (workspace-write, approvals auto_review)'
-    : '沙盒自动审查（workspace-write，approval auto_review）';
+    ? 'sandboxed with on-request approvals (workspace-write)'
+    : '沙盒模式（workspace-write，approval_policy=on-request）';
 }

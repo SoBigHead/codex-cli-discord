@@ -103,7 +103,7 @@ export function createRunnerArgsBuilder({
       || fastMode.source === 'parent channel'
       || fastMode.enabled === false;
 
-    const common = ['--enable', 'goals'];
+    const common = [];
     if (systemText) common.push('-c', `developer_instructions=${tomlString(systemText)}`);
     if (codexProfile?.isExplicit) {
       if (!codexProfile.valid) {

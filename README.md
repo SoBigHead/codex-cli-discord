@@ -16,7 +16,7 @@
 
 长任务不会一直刷屏。bot 会更新进度卡，也可以按频道设置成持续发送过程消息。最终回复是否 @ 发起人，也可以在设置里选。
 
-Codex 的安全模式现在使用 workspace-write 沙盒，并把需要审批的动作交给 Codex 的 auto review reviewer。危险模式仍然是完全绕过 sandbox 和 approval，只适合受控的个人环境。
+Codex 的安全模式现在使用 workspace-write 沙盒，并将审批策略设为 on-request。危险模式仍然是完全绕过 sandbox 和 approval，只适合受控的个人环境。
 
 ## 你能做什么
 

@@ -100,7 +100,7 @@ test('forkCodexThread rejects missing parent thread id before spawning', async (
   assert.equal(spawned, false);
 });
 
-test('Codex goal helpers enable goals and send thread goal requests', async () => {
+test('Codex goal helpers send thread goal requests through app-server', async () => {
   const fake = createFakeSpawn({
     onRequest(request) {
       if (request.method === 'initialize') {
@@ -145,7 +145,7 @@ test('Codex goal helpers enable goals and send thread goal requests', async () =
 
   assert.equal(result.goal.objective, 'ship the feature');
   assert.deepEqual(fake.calls.map((call) => [call.bin, call.args]), [
-    ['codex-test', ['app-server', '--listen', 'stdio://', '--enable', 'goals']],
+    ['codex-test', ['app-server', '--listen', 'stdio://']],
   ]);
   assert.deepEqual(fake.writes.map((line) => JSON.parse(line).method), ['initialize', 'thread/goal/set']);
 });
@@ -183,7 +183,7 @@ test('Codex goal helpers support get and clear requests', async () => {
 
   assert.deepEqual(seen, ['initialize', 'thread/goal/get', 'initialize', 'thread/goal/clear']);
   assert.deepEqual(fake.calls.map((call) => call.args), [
-    ['app-server', '--listen', 'stdio://', '--enable', 'goals'],
-    ['app-server', '--listen', 'stdio://', '--enable', 'goals'],
+    ['app-server', '--listen', 'stdio://'],
+    ['app-server', '--listen', 'stdio://'],
   ]);
 });

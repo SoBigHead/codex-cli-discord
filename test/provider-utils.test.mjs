@@ -68,8 +68,6 @@ test('buildRunnerArgs keeps codex resume behavior and native compact config', ()
     'resume',
     '--json',
     '--dangerously-bypass-approvals-and-sandbox',
-    '--enable',
-    'goals',
     '-m',
     'o3',
     '-c',
@@ -106,8 +104,6 @@ test('buildRunnerArgs still forwards native compact config for a resumed codex s
     'resume',
     '--json',
     '--dangerously-bypass-approvals-and-sandbox',
-    '--enable',
-    'goals',
     '-m',
     'o3',
     '-c',
@@ -146,8 +142,6 @@ test('buildRunnerArgs still forwards native compact config for a fresh codex ses
     '--dangerously-bypass-approvals-and-sandbox',
     '-C',
     '/tmp/work',
-    '--enable',
-    'goals',
     '-m',
     'o3',
     '-c',
@@ -162,7 +156,7 @@ test('buildRunnerArgs still forwards native compact config for a fresh codex ses
   ]);
 });
 
-test('buildRunnerArgs uses codex auto-review approvals in safe mode', () => {
+test('buildRunnerArgs uses codex on-request approvals in safe mode', () => {
   const freshArgs = buildRunnerArgs({
     provider: 'codex',
     sessionId: null,
@@ -178,7 +172,7 @@ test('buildRunnerArgs uses codex auto-review approvals in safe mode', () => {
     mode: 'safe',
   });
 
-  assert.deepEqual(freshArgs.slice(0, 9), [
+  assert.deepEqual(freshArgs.slice(0, 7), [
     'exec',
     '--json',
     '--skip-git-repo-check',
@@ -186,10 +180,8 @@ test('buildRunnerArgs uses codex auto-review approvals in safe mode', () => {
     'workspace-write',
     '-c',
     'approval_policy="on-request"',
-    '-c',
-    'approvals_reviewer="auto_review"',
   ]);
-  assert.deepEqual(resumedArgs.slice(0, 9), [
+  assert.deepEqual(resumedArgs.slice(0, 7), [
     'exec',
     'resume',
     '--json',
@@ -197,8 +189,6 @@ test('buildRunnerArgs uses codex auto-review approvals in safe mode', () => {
     'sandbox_mode="workspace-write"',
     '-c',
     'approval_policy="on-request"',
-    '-c',
-    'approvals_reviewer="auto_review"',
   ]);
 });
 
