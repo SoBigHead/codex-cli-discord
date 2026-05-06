@@ -152,6 +152,50 @@ test('handleCodexRunnerEvent captures final answer from bridged session events',
   assert.deepEqual(state.messages, []);
 });
 
+test('handleCodexRunnerEvent does not surface subagent notification blocks as final answer', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+
+  handleCodexRunnerEvent({
+    type: 'event_msg',
+    payload: {
+      type: 'agent_message',
+      message: [
+        '第一段正常总结。',
+        '<subagent_notification>',
+        '{"agent_path":"019d5809","status":{"completed":"Sub 输出原文很多很多。"}}',
+        '</subagent_notification>',
+        '第二段正常总结。',
+      ].join('\n'),
+      phase: 'final_answer',
+    },
+  }, state, () => {}, {
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+  });
+
+  handleCodexRunnerEvent({
+    type: 'event_msg',
+    payload: {
+      type: 'agent_message',
+      message: '<subagent_notification>{"agent_path":"019d5809"}</subagent_notification>',
+      phase: 'final_answer',
+    },
+  }, state, () => {}, {
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+  });
+
+  assert.deepEqual(state.finalAnswerMessages, ['第一段正常总结。\n\n第二段正常总结。']);
+});
+
 test('handleGeminiRunnerEvent captures init, delta messages, and result stats', () => {
   const state = {
     messages: [],

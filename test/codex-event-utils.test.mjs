@@ -8,6 +8,7 @@ import {
   extractAgentMessageText,
   getAgentMessagePhase,
   isFinalAnswerLikeAgentMessage,
+  stripCodexControlBlocks,
 } from '../src/codex-event-utils.js';
 import {
   extractRawProgressTextFromEvent,
@@ -44,6 +45,25 @@ test('extractAgentMessageText keeps markdown line breaks', () => {
     text: '  结论：\n1. 第一条\n2. 第二条\n\n```txt\nline a\nline b\n```  ',
   });
   assert.equal(text, '结论：\n1. 第一条\n2. 第二条\n\n```txt\nline a\nline b\n```');
+});
+
+test('extractAgentMessageText strips subagent notification control blocks', () => {
+  const text = extractAgentMessageText({
+    type: 'agent_message',
+    message: [
+      '第一段正常总结。',
+      '<subagent_notification>',
+      '{"agent_path":"sub-1","status":{"completed":"很长的子任务原始输出"}}',
+      '</subagent_notification>',
+      '第二段正常总结。',
+    ].join('\n'),
+  });
+
+  assert.equal(text, '第一段正常总结。\n\n第二段正常总结。');
+  assert.equal(
+    stripCodexControlBlocks('<subagent_notification>{"agent_path":"sub-1"}</subagent_notification>'),
+    '',
+  );
 });
 
 test('getAgentMessagePhase normalizes phase and defaults empty', () => {

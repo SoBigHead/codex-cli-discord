@@ -6,7 +6,14 @@ function normalizeMessageText(value) {
   if (value === null || value === undefined) return '';
   if (typeof value !== 'string') return '';
   const text = String(value).replace(/\r\n?/g, '\n');
-  return text.trim();
+  return stripCodexControlBlocks(text);
+}
+
+export function stripCodexControlBlocks(value) {
+  return String(value || '')
+    .replace(/<subagent_notification>\s*[\s\S]*?<\/subagent_notification>/gi, '\n\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function normalizePhase(value) {
