@@ -40,6 +40,7 @@ export function createRunnerExecutor({
   readGeminiSessionState = () => null,
   getCodexThreadGoal = null,
   codexGoalMonitorIntervalMs = 2000,
+  codexGoalCompletionGraceMs = 15_000,
   spawnFn = spawn,
   claudeLongIdleMs = 15 * 60_000,
   claudeLongMaxSessions = 8,
@@ -214,6 +215,7 @@ export function createRunnerExecutor({
       let stoppedAfterGoalComplete = false;
       let goalPollInFlight = false;
       let goalMonitorTimer = null;
+      let goalCompletionStopTimer = null;
       let progressBridgeThreadId = null;
       let stopProgressBridge = null;
       const timeoutMs = normalizeTimeoutMs(options.timeoutMs, defaultTimeoutMs);
@@ -242,6 +244,30 @@ export function createRunnerExecutor({
         goalMonitorTimer = null;
       };
 
+      const clearGoalCompletionStopTimer = () => {
+        if (!goalCompletionStopTimer) return;
+        clearTimeout(goalCompletionStopTimer);
+        goalCompletionStopTimer = null;
+      };
+
+      const scheduleGoalCompletionStop = () => {
+        if (goalCompletionStopTimer || child.killed) return;
+        const graceMs = Math.max(0, Number(options.goalMonitor?.completionGraceMs ?? codexGoalCompletionGraceMs) || 0);
+        if (graceMs === 0) {
+          logs.push('Codex goal reached complete; stopping goal continuation runner.');
+          stopChildProcess(child);
+          return;
+        }
+        logs.push(`Codex goal reached complete; waiting ${graceMs}ms for final output before stopping runner.`);
+        goalCompletionStopTimer = setTimeout(() => {
+          goalCompletionStopTimer = null;
+          if (resolved || child.killed) return;
+          logs.push('Codex goal completion grace elapsed; stopping goal continuation runner.');
+          stopChildProcess(child);
+        }, graceMs);
+        goalCompletionStopTimer.unref?.();
+      };
+
       const pollGoalCompletion = async () => {
         if (!options.goalMonitor?.enabled || goalPollInFlight || resolved) return;
         const monitoredThreadId = String(threadId || options.goalMonitor.threadId || '').trim();
@@ -251,10 +277,10 @@ export function createRunnerExecutor({
           const report = await options.goalMonitor.getCodexThreadGoal({ threadId: monitoredThreadId });
           const goal = report?.goal || null;
           if (String(goal?.status || '').trim() !== 'complete') return;
+          if (goalCompleted) return;
           goalCompleted = goal;
           stoppedAfterGoalComplete = true;
-          logs.push('Codex goal reached complete; stopping goal continuation runner.');
-          stopChildProcess(child);
+          scheduleGoalCompletionStop();
         } catch (err) {
           logs.push(`Codex goal monitor failed: ${safeError(err)}`);
         } finally {
@@ -341,6 +367,7 @@ export function createRunnerExecutor({
         resolved = true;
         if (timeout) clearTimeout(timeout);
         stopGoalMonitor();
+        clearGoalCompletionStopTimer();
         stopBridges();
         resolve(result);
       };
@@ -422,6 +449,7 @@ export function createRunnerExecutor({
       enabled: true,
       threadId,
       intervalMs: codexGoalMonitorIntervalMs,
+      completionGraceMs: codexGoalCompletionGraceMs,
       getCodexThreadGoal,
     };
   }
