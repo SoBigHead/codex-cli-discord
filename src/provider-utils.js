@@ -55,6 +55,14 @@ export function buildRunnerArgs({
       model,
     });
   }
+  if (normalizedProvider === 'kiro') {
+    return buildKiroArgs({
+      sessionId,
+      prompt,
+      mode,
+      model,
+    });
+  }
 
   return buildCodexArgs({
     sessionId,
@@ -148,5 +156,19 @@ function buildGeminiArgs({
   if (model) args.push('--model', model);
   if (sessionId) args.push('--resume', sessionId);
   args.push('--prompt', prompt);
+  return args;
+}
+
+function buildKiroArgs({
+  sessionId,
+  prompt,
+  mode,
+  model,
+}) {
+  const args = ['chat', '--no-interactive'];
+  if (mode === 'dangerous') args.push('--trust-all-tools');
+  if (model) args.push('--model', model);
+  if (sessionId) args.push('--resume-id', sessionId);
+  args.push(prompt);
   return args;
 }

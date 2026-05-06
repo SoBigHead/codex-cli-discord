@@ -266,6 +266,7 @@ const PROVIDER_CHILD_THREAD_WORKSPACE_MODE_OVERRIDES = {
   codex: process.env.CODEX__CHILD_THREAD_WORKSPACE_MODE,
   claude: process.env.CLAUDE__CHILD_THREAD_WORKSPACE_MODE,
   gemini: process.env.GEMINI__CHILD_THREAD_WORKSPACE_MODE,
+  kiro: process.env.KIRO__CHILD_THREAD_WORKSPACE_MODE,
 };
 const {
   resolve: resolveChildThreadWorkspaceMode,
@@ -281,6 +282,7 @@ const PROVIDER_DEFAULT_WORKSPACE_OVERRIDES = {
   codex: resolveConfiguredWorkspaceDir(process.env.CODEX__DEFAULT_WORKSPACE_DIR),
   claude: resolveConfiguredWorkspaceDir(process.env.CLAUDE__DEFAULT_WORKSPACE_DIR),
   gemini: resolveConfiguredWorkspaceDir(process.env.GEMINI__DEFAULT_WORKSPACE_DIR),
+  kiro: resolveConfiguredWorkspaceDir(process.env.KIRO__DEFAULT_WORKSPACE_DIR),
 };
 const {
   resolve: resolveProviderDefaultWorkspace,
@@ -324,6 +326,7 @@ const TASK_RETRY_MAX_DELAY_MS = Math.max(
 const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const CLAUDE_BIN = (process.env.CLAUDE_BIN || 'claude').trim() || 'claude';
 const GEMINI_BIN = (process.env.GEMINI_BIN || 'gemini').trim() || 'gemini';
+const KIRO_BIN = (process.env.KIRO_BIN || 'kiro').trim() || 'kiro';
 const SHOW_REASONING = String(process.env.SHOW_REASONING || 'false').toLowerCase() === 'true';
 const DEBUG_EVENTS = String(process.env.DEBUG_EVENTS || 'false').toLowerCase() === 'true';
 const PROGRESS_UPDATES_ENABLED = String(process.env.PROGRESS_UPDATES_ENABLED || 'true').toLowerCase() !== 'false';
@@ -383,9 +386,10 @@ const PROJECT_UPGRADE_INITIAL_DELAY_MS = normalizeIntervalMs(
   30_000,
   1000,
 );
+const allowedChannelIdsForUpgradeNotify = ALLOWED_CHANNEL_IDS instanceof Set ? ALLOWED_CHANNEL_IDS : new Set();
 const PROJECT_UPGRADE_NOTIFY_CHANNEL_IDS = parseCsvSet(
-  process.env.AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS || [...ALLOWED_CHANNEL_IDS].join(','),
-);
+  process.env.AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS || [...allowedChannelIdsForUpgradeNotify].join(','),
+) || new Set();
 const PROJECT_UPGRADE_ADMIN_USER_IDS = parseCsvSet(
   process.env.AGENTS_IN_DISCORD_UPGRADE_ADMIN_USER_IDS || '',
 );
@@ -402,11 +406,13 @@ const getProviderBin = (provider) => getProviderBinBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
   geminiBin: GEMINI_BIN,
+  kiroBin: KIRO_BIN,
 });
 const getCliHealth = (provider = DEFAULT_PROVIDER) => getCliHealthBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
   geminiBin: GEMINI_BIN,
+  kiroBin: KIRO_BIN,
   spawnEnv: SPAWN_ENV,
   safeError,
 });

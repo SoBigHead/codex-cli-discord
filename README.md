@@ -1,6 +1,6 @@
 # Agents in Discord
 
-在 Discord 线程里运行 Codex CLI、Claude Code 和 Gemini CLI 的 bot。
+在 Discord 线程里运行 Codex CLI、Claude Code、Gemini CLI 和 Kiro CLI 的 bot。
 
 它是一个独立 bridge，不是 OpenClaw 插件，也不需要 OpenClaw。
 
@@ -12,7 +12,7 @@
 
 一个 Discord 频道或线程，对应一条 provider 会话。
 
-你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Gemini 拆成三个独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。
+你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Gemini、Kiro 拆成四个独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。
 
 长任务不会一直刷屏。bot 会更新进度卡，也可以按频道设置成持续发送过程消息。最终回复是否 @ 发起人，也可以在设置里选。
 
@@ -32,12 +32,13 @@ Codex 的安全模式现在使用 workspace-write 沙盒，并把需要审批的
 
 需要 Node.js 18+，一个 Discord Bot Token，以及你要使用的 CLI。
 
-本项目不管理 Codex、Claude、Gemini 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
+本项目不管理 Codex、Claude、Gemini、Kiro 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
 
 ```bash
 codex --version
 claude --version
 gemini --version
+kiro version
 ```
 
 如果 CLI 不在 bot 进程的 PATH 里，可以在 `.env` 里写绝对路径。
@@ -46,6 +47,7 @@ gemini --version
 CODEX_BIN=/opt/homebrew/bin/codex
 CLAUDE_BIN=/opt/homebrew/bin/claude
 GEMINI_BIN=/opt/homebrew/bin/gemini
+KIRO_BIN=/opt/homebrew/bin/kiro
 ```
 
 ## 安装
@@ -63,7 +65,7 @@ npm start
 
 ## Discord 里怎么用
 
-默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude bot 默认是 `cc_`，独立 Gemini bot 默认是 `gm_`。
+默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude bot 默认是 `cc_`，独立 Gemini bot 默认是 `gm_`，独立 Kiro bot 默认是 `kr_`。
 
 最常用的入口是这些。
 
@@ -110,15 +112,16 @@ workspace 是 CLI 真正执行任务的目录。
 npm start
 ```
 
-如果想把三家 provider 拆成独立 bot，可以在同一个 `.env` 里写分组配置，然后分别启动。
+如果想把多家 provider 拆成独立 bot，可以在同一个 `.env` 里写分组配置，然后分别启动。
 
 ```bash
 npm run start:codex
 npm run start:claude
 npm run start:gemini
+npm run start:kiro
 ```
 
-分组配置使用 `CODEX__*`、`CLAUDE__*`、`GEMINI__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。
+分组配置使用 `CODEX__*`、`CLAUDE__*`、`GEMINI__*`、`KIRO__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。
 
 ## 关键配置
 
@@ -148,6 +151,10 @@ CLAUDE__SLASH_PREFIX=cc
 GEMINI__DISCORD_TOKEN=...
 GEMINI__DEFAULT_WORKSPACE_DIR=/Users/you/gemini-work
 GEMINI__SLASH_PREFIX=gm
+
+KIRO__DISCORD_TOKEN=...
+KIRO__DEFAULT_WORKSPACE_DIR=/Users/you/kiro-work
+KIRO__SLASH_PREFIX=kr
 ```
 
 访问控制建议至少设置 `ALLOWED_CHANNEL_IDS` 或 `ALLOWED_USER_IDS`。多人服务器里不要默认使用 dangerous mode。
@@ -179,6 +186,7 @@ macOS 上推荐用仓库自带脚本重启 bot 服务。
 scripts/restart-discord-bot-service.sh codex
 scripts/restart-discord-bot-service.sh claude
 scripts/restart-discord-bot-service.sh gemini
+scripts/restart-discord-bot-service.sh kiro
 scripts/restart-discord-bot-service.sh all
 ```
 

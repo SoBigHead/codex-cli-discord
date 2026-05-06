@@ -18,6 +18,9 @@ resolve_label() {
     gemini|"${PROJECT_LABEL_PREFIX}.gemini"|"${LEGACY_LABEL_PREFIX}.gemini")
       printf '%s\n' "${PROJECT_LABEL_PREFIX}.gemini"
       ;;
+    kiro|"${PROJECT_LABEL_PREFIX}.kiro"|"${LEGACY_LABEL_PREFIX}.kiro")
+      printf '%s\n' "${PROJECT_LABEL_PREFIX}.kiro"
+      ;;
     *)
       return 1
       ;;
@@ -47,7 +50,7 @@ restart_label() {
 main() {
   local raw="${1:-}"
   if [[ -z "${raw}" ]]; then
-    printf 'usage: %s <codex|claude|gemini|all|label>\n' "$0" >&2
+    printf 'usage: %s <codex|claude|gemini|kiro|all|label>\n' "$0" >&2
     exit 64
   fi
 
@@ -55,6 +58,7 @@ main() {
     restart_label "${PROJECT_LABEL_PREFIX}"
     restart_label "${PROJECT_LABEL_PREFIX}.claude"
     restart_label "${PROJECT_LABEL_PREFIX}.gemini"
+    restart_label "${PROJECT_LABEL_PREFIX}.kiro"
     exit 0
   fi
 

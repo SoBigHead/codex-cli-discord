@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createRunnerArgsBuilder, uniqueDirs } from './runner-args.js';
 import { createClaudeLongRunner } from './claude-long-runner.js';
 import { CODEX_GOAL_CONTINUATION_PROMPT } from './codex-goal-flow.js';
@@ -127,7 +127,13 @@ export function createRunnerExecutor({
       console.log(`Running ${provider}:`, [bin, ...args].join(' '));
     }
 
-    const result = await spawnRunner({ provider, args, cwd: workspaceDir, workspaceDir }, {
+    const result = await spawnRunner({
+      provider,
+      args,
+      cwd: workspaceDir,
+      workspaceDir,
+      sessionId: getSessionId(session),
+    }, {
       onSpawn,
       wasCancelled,
       onEvent,
@@ -155,7 +161,13 @@ export function createRunnerExecutor({
           systemPrompt,
           additionalWorkspaceDirs,
         });
-        const recovered = await spawnRunner({ provider, args: recoveryArgs, cwd: workspaceDir, workspaceDir }, {
+        const recovered = await spawnRunner({
+          provider,
+          args: recoveryArgs,
+          cwd: workspaceDir,
+          workspaceDir,
+          sessionId: recoverySessionId,
+        }, {
           onSpawn,
           wasCancelled,
           onEvent,
@@ -184,7 +196,7 @@ export function createRunnerExecutor({
     };
   }
 
-  function spawnRunner({ provider, args, cwd, workspaceDir }, options = {}) {
+  function spawnRunner({ provider, args, cwd, workspaceDir, sessionId = null }, options = {}) {
     return new Promise((resolve) => {
       const bin = getProviderBin(provider);
       const child = spawnFn(bin, args, {
@@ -205,6 +217,7 @@ export function createRunnerExecutor({
         claudeSawAgentToolUse: false,
         claudeStopReason: '',
         geminiDeltaBuffer: '',
+        kiroStdoutLines: [],
       };
       let usage = null;
       let threadId = null;
@@ -306,6 +319,15 @@ export function createRunnerExecutor({
           }
         }
 
+        if (normalizeProvider(provider) === 'kiro' && source === 'stdout') {
+          const cleaned = sanitizeKiroStdoutLine(line);
+          if (cleaned) {
+            meta.kiroStdoutLines.push(cleaned);
+            options.onLog?.(cleaned, source);
+          }
+          return;
+        }
+
         if (provider === 'codex' && trimmed.includes('state db missing rollout path for thread')) return;
         if (source === 'stderr' || debugEvents) logs.push(trimmed);
         options.onLog?.(trimmed, source);
@@ -387,6 +409,20 @@ export function createRunnerExecutor({
             if (buffered) finalAnswerMessages.push(buffered);
           }
         }
+        if (normalizeProvider(provider) === 'kiro') {
+          const plainText = String((meta.kiroStdoutLines || []).join('\n')).trim();
+          if (plainText && finalAnswerMessages.length === 0) {
+            finalAnswerMessages.push(plainText);
+          }
+          if (!threadId) {
+            threadId = resolveLatestKiroSessionId({
+              kiroBin: bin,
+              workspaceDir,
+              spawnEnv,
+              fallbackSessionId: sessionId,
+            });
+          }
+        }
         const cancelled = Boolean(timedOut || options.wasCancelled?.());
         if (goalCompleted && finalAnswerMessages.length === 0) {
           if (messages.length) {
@@ -434,6 +470,101 @@ export function createRunnerExecutor({
     closeAllRuntimeSessions: (reason = 'closed') => claudeLongRunner.closeAll(reason),
     getClaudeLongSessions: () => claudeLongRunner.getSnapshot(),
   };
+}
+
+function resolveLatestKiroSessionId({
+  kiroBin,
+  workspaceDir = '',
+  spawnEnv = process.env,
+  fallbackSessionId = null,
+} = {}) {
+  const fallback = String(fallbackSessionId || '').trim();
+  try {
+    const check = spawnSync(kiroBin, ['chat', '--list-sessions', '--format', 'json'], {
+      cwd: workspaceDir || undefined,
+      env: spawnEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      encoding: 'utf8',
+      timeout: 4000,
+    });
+    if (check.error || check.status !== 0) {
+      return fallback;
+    }
+    const parsed = extractKiroSessionIdFromOutput(check.stdout || check.stderr || '');
+    return parsed || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function extractKiroSessionIdFromOutput(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+
+  const cleaned = stripAnsiControl(text);
+  const fromJson = extractKiroSessionIdFromJsonText(cleaned);
+  if (fromJson) return fromJson;
+
+  const labeled = cleaned.match(/(?:session[_ -]?id|id)\s*[:=]\s*([A-Za-z0-9._-]{8,})/i)?.[1];
+  if (labeled) return labeled;
+
+  const uuid = cleaned.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i)?.[0];
+  if (uuid) return uuid;
+
+  return '';
+}
+
+function extractKiroSessionIdFromJsonText(raw) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return '';
+  }
+  return extractKiroSessionIdFromJsonValue(parsed);
+}
+
+function extractKiroSessionIdFromJsonValue(value) {
+  if (!value) return '';
+  if (typeof value === 'string') return '';
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const id = extractKiroSessionIdFromJsonValue(item);
+      if (id) return id;
+    }
+    return '';
+  }
+  if (typeof value !== 'object') return '';
+
+  const direct = String(value.sessionId || value.session_id || value.id || '').trim();
+  if (direct) return direct;
+
+  if (Array.isArray(value.sessions)) {
+    for (const session of value.sessions) {
+      const id = extractKiroSessionIdFromJsonValue(session);
+      if (id) return id;
+    }
+  }
+
+  return '';
+}
+
+function sanitizeKiroStdoutLine(line) {
+  const raw = String(line || '');
+  const stripped = stripAnsiControl(raw).trim();
+  if (!stripped) return '';
+  if (/^warning!\s*q cli is now kiro cli/i.test(stripped)) return '';
+  if (/^▸\s*credits:/i.test(stripped)) return '';
+  if (/^to delete a session,/i.test(stripped)) return '';
+  return stripped.replace(/^>\s*/, '').trim();
+}
+
+function stripAnsiControl(value) {
+  return String(value || '')
+    .replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, '')
+    .replace(/\u001B[@-_]/g, '')
+    .replace(/[\u0000-\u0008\u000B-\u001A\u001C-\u001F\u007F]/g, '');
 }
 
 function isCodexGoalContinuationPrompt(prompt) {

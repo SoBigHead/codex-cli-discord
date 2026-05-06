@@ -18,7 +18,7 @@ if (decision.action === 'block') {
     `agents-in-discord guard: refused ${reason} for protected bot service(s): ${labels}\n`,
   );
   process.stderr.write(
-    `Use ${getSafeRestartScriptPath()} <codex|claude|gemini|label> or launchctl kickstart -k gui/$(id -u)/<label> instead.\n`,
+    `Use ${getSafeRestartScriptPath()} <codex|claude|gemini|kiro|label> or launchctl kickstart -k gui/$(id -u)/<label> instead.\n`,
   );
   process.exit(64);
 }

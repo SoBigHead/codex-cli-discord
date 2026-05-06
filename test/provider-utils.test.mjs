@@ -28,9 +28,11 @@ test('provider labels are readable', () => {
   assert.equal(getProviderDisplayName('claude'), 'Claude Code');
   assert.equal(getProviderDisplayName('codex'), 'Codex CLI');
   assert.equal(getProviderDisplayName('gemini'), 'Gemini CLI');
+  assert.equal(getProviderDisplayName('kiro'), 'Kiro CLI');
   assert.equal(getProviderShortName('claude'), 'Claude');
   assert.equal(getProviderShortName('codex'), 'Codex');
   assert.equal(getProviderShortName('gemini'), 'Gemini');
+  assert.equal(getProviderShortName('kiro'), 'Kiro');
 });
 
 test('provider capabilities distinguish shared native compact vs codex-only passthroughs', () => {
@@ -39,12 +41,50 @@ test('provider capabilities distinguish shared native compact vs codex-only pass
   assert.equal(providerSupportsConfigOverrides('codex'), true);
   assert.equal(providerSupportsConfigOverrides('claude'), false);
   assert.equal(providerSupportsConfigOverrides('gemini'), false);
+  assert.equal(providerSupportsConfigOverrides('kiro'), false);
   assert.equal(providerSupportsCompactStrategy('claude', 'hard'), true);
   assert.equal(providerSupportsCompactStrategy('claude', 'native'), true);
   assert.deepEqual(getProviderCompactCapabilities('gemini').strategies, ['hard', 'native', 'off']);
+  assert.deepEqual(getProviderCompactCapabilities('kiro').strategies, ['hard', 'off']);
   assert.equal(providerSupportsNativeCompact('codex'), true);
   assert.equal(providerSupportsNativeCompact('claude'), true);
   assert.equal(providerSupportsNativeCompact('gemini'), true);
+  assert.equal(providerSupportsNativeCompact('kiro'), false);
+});
+
+test('buildRunnerArgs builds kiro chat command with resume support', () => {
+  const resumed = buildRunnerArgs({
+    provider: 'kiro',
+    sessionId: 'kiro-session-1',
+    workspaceDir: '/tmp/work',
+    prompt: 'fix the failing tests',
+    mode: 'safe',
+    model: 'kiro-pro',
+  });
+  const freshDangerous = buildRunnerArgs({
+    provider: 'kiro',
+    sessionId: null,
+    workspaceDir: '/tmp/work',
+    prompt: 'summarize the repo',
+    mode: 'dangerous',
+    model: null,
+  });
+
+  assert.deepEqual(resumed, [
+    'chat',
+    '--no-interactive',
+    '--model',
+    'kiro-pro',
+    '--resume-id',
+    'kiro-session-1',
+    'fix the failing tests',
+  ]);
+  assert.deepEqual(freshDangerous, [
+    'chat',
+    '--no-interactive',
+    '--trust-all-tools',
+    'summarize the repo',
+  ]);
 });
 
 test('buildRunnerArgs keeps codex resume behavior and native compact config', () => {

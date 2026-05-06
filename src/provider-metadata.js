@@ -59,6 +59,26 @@ const PROVIDER_METADATA = Object.freeze({
       workspaceSessionPolicy: 'strict',
     }),
   }),
+  kiro: Object.freeze({
+    aliases: Object.freeze(['kiro']),
+    displayName: 'Kiro CLI',
+    shortName: 'Kiro',
+    defaultBin: 'kiro',
+    binEnvName: 'KIRO_BIN',
+    defaultSlashPrefix: 'kr',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze([]),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'off']),
+        supportsNativeStrategy: false,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
 });
 
 function normalizeCompactStrategyValue(value) {

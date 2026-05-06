@@ -31,11 +31,19 @@ const PROVIDER_NATIVE_SESSION_COMMANDS = Object.freeze({
       plural: 'chat sessions',
     }),
   }),
+  kiro: Object.freeze({
+    resume: 'kiro_resume',
+    sessions: 'kiro_sessions',
+    sessionTerm: Object.freeze({
+      singular: 'chat session',
+      plural: 'chat sessions',
+    }),
+  }),
 });
 
 const ALL_SESSION_COMMAND_ALIASES = Object.freeze({
-  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'chat_sessions']),
-  resume: Object.freeze(['rollout_resume', 'project_resume', 'chat_resume']),
+  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'chat_sessions', 'kiro_sessions']),
+  resume: Object.freeze(['rollout_resume', 'project_resume', 'chat_resume', 'kiro_resume']),
 });
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
@@ -60,6 +68,8 @@ const COMMAND_ALIASES = Object.freeze({
   rollout_resume: 'resume',
   project_resume: 'resume',
   chat_resume: 'resume',
+  kiro_sessions: 'sessions',
+  kiro_resume: 'resume',
 });
 
 export function normalizeCommandName(value, { allowBangPrefix = false } = {}) {
@@ -97,9 +107,11 @@ function getSessionAliasDescriptions(aliases = []) {
     if (alias === 'rollout_sessions') return [alias, '列出最近的 rollout sessions（同 sessions）'];
     if (alias === 'project_sessions') return [alias, '列出最近的 project sessions（同 sessions）'];
     if (alias === 'chat_sessions') return [alias, '列出最近的 chat sessions（同 sessions）'];
+    if (alias === 'kiro_sessions') return [alias, '列出最近的 Kiro chat sessions（同 sessions）'];
     if (alias === 'rollout_resume') return [alias, '继承一个已有的 rollout session（同 resume）'];
     if (alias === 'project_resume') return [alias, '继承一个已有的 project session（同 resume）'];
     if (alias === 'chat_resume') return [alias, '继承一个已有的 chat session（同 resume）'];
+    if (alias === 'kiro_resume') return [alias, '继承一个已有的 Kiro chat session（同 resume）'];
     return [alias, alias];
   })));
 }
@@ -194,6 +206,7 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
             { name: 'codex', value: 'codex' },
             { name: 'claude', value: 'claude' },
             { name: 'gemini', value: 'gemini' },
+            { name: 'kiro', value: 'kiro' },
             { name: 'status', value: 'status' },
           ));
       },

@@ -486,7 +486,7 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   const sharedHelp = sharedFormatters.formatHelpReport({ language: 'en' });
   const lockedHelp = lockedFormatters.formatHelpReport({ language: 'en' });
 
-  assert.match(sharedHelp, /!provider <codex\|claude\|gemini\|status>/);
+  assert.match(sharedHelp, /!provider <codex\|claude\|gemini\|kiro\|status>/);
   assert.match(sharedHelp, /!setdir <path\|browse\|default\|status>/);
   assert.match(sharedHelp, /!setdefaultdir <path\|browse\|clear\|status>/);
   assert.match(sharedHelp, /native runtime store/);
@@ -497,7 +497,7 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   assert.doesNotMatch(geminiHelp, /!config <key=value>/);
   assert.doesNotMatch(geminiHelp, /!effort </);
   assert.match(geminiHelp, /raw config passthrough/);
-  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|gemini\|status>/);
+  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|gemini\|kiro\|status>/);
 });
 
 test('createReportFormatters.workspace reports explain session reset and lock owner', () => {

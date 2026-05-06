@@ -142,7 +142,7 @@ test('buildSlashCommands exposes browse keyword in workspace option descriptions
   assert.match(setdefaultdir.options[0].description, /browse/);
 });
 
-test('buildSlashCommands exposes gemini as provider choice', () => {
+test('buildSlashCommands exposes kiro as provider choice', () => {
   const commands = buildSlashCommands({
     SlashCommandBuilder: MockSlashCommandBuilder,
     slashPrefix: 'cx',
@@ -152,7 +152,7 @@ test('buildSlashCommands exposes gemini as provider choice', () => {
   const provider = commands.find((command) => command.name === 'cx_provider');
   const choices = provider.options[0].choices.map((choice) => choice.value);
 
-  assert.deepEqual(choices, ['codex', 'claude', 'gemini', 'status']);
+  assert.deepEqual(choices, ['codex', 'claude', 'gemini', 'kiro', 'status']);
 });
 
 test('buildSlashCommands lets model open panel or set effort', () => {

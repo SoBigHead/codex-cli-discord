@@ -1,6 +1,7 @@
 import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
 import { createGeminiProviderAdapter } from './providers/gemini.js';
+import { createKiroProviderAdapter } from './providers/kiro.js';
 import { createProviderAdapterRegistry } from './providers/index.js';
 
 export function createRunnerEventParser({
@@ -20,6 +21,9 @@ export function createRunnerEventParser({
     }),
     createGeminiProviderAdapter({
       parseEvent: (event, state, ensureSessionBridge) => handleGeminiRunnerEvent(event, state, ensureSessionBridge),
+    }),
+    createKiroProviderAdapter({
+      parseEvent: (event, state, ensureSessionBridge) => handleKiroRunnerEvent(event, state, ensureSessionBridge),
     }),
   ]);
 
@@ -155,6 +159,39 @@ export function handleClaudeRunnerEvent(event, state, ensureSessionBridge) {
         ensureSessionBridge(state.threadId);
       }
       if (event.usage) state.usage = event.usage;
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+export function handleKiroRunnerEvent(event, state, ensureSessionBridge) {
+  switch (String(event?.type || '').trim().toLowerCase()) {
+    case 'session.created':
+    case 'session.resumed':
+    case 'init': {
+      const nextThreadId = event.session_id || event.sessionId || state.threadId;
+      if (nextThreadId && nextThreadId !== state.threadId) {
+        state.threadId = nextThreadId;
+        ensureSessionBridge(state.threadId);
+      }
+      break;
+    }
+    case 'message':
+    case 'assistant': {
+      const text = String(event.output_text || event.content || event.text || '').trim();
+      if (!text) break;
+      appendUniqueText(state.finalAnswerMessages, text);
+      break;
+    }
+    case 'result': {
+      if (event.usage) state.usage = event.usage;
+      const nextThreadId = event.session_id || event.sessionId || state.threadId;
+      if (nextThreadId) {
+        state.threadId = nextThreadId;
+        ensureSessionBridge(state.threadId);
+      }
       break;
     }
     default:

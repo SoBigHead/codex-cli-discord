@@ -5,9 +5,11 @@ export const PROTECTED_SERVICE_LABELS = Object.freeze([
   'com.atou.agents-in-discord',
   'com.atou.agents-in-discord.claude',
   'com.atou.agents-in-discord.gemini',
+  'com.atou.agents-in-discord.kiro',
   'com.atou.codex-discord-bot',
   'com.atou.codex-discord-bot.claude',
   'com.atou.codex-discord-bot.gemini',
+  'com.atou.codex-discord-bot.kiro',
 ]);
 
 const PROTECTED_SERVICE_LABEL_SET = new Set(PROTECTED_SERVICE_LABELS);

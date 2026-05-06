@@ -148,7 +148,7 @@ test('createOnboardingFlow builds provider buttons in shared mode', () => {
   assert.equal(rows.length, 2);
   assert.deepEqual(
     rows[1].components.map((component) => component.data.label),
-    ['codex', 'claude', 'gemini'],
+    ['codex', 'claude', 'gemini', 'kiro'],
   );
   assert.equal(rows[1].components[1].data.style, ButtonStyle.Primary);
 });

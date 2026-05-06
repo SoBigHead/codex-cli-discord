@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { normalizeProvider } from './provider-metadata.js';
 
@@ -9,6 +10,8 @@ export function listRecentSessions({ provider = 'codex', workspaceDir = '', limi
       return listRecentClaudeSessions(limit, workspaceDir);
     case 'gemini':
       return listRecentGeminiSessions(limit, workspaceDir);
+    case 'kiro':
+      return listRecentKiroSessions(limit, workspaceDir);
     default:
       return listRecentCodexSessions(limit);
   }
@@ -94,6 +97,22 @@ function listRecentGeminiSessions(limit = 10, workspaceDir = '') {
   return [...latestById.values()]
     .sort((a, b) => b.mtime - a.mtime)
     .slice(0, limit);
+}
+
+function listRecentKiroSessions(limit = 10, workspaceDir = '') {
+  const result = spawnSync(getKiroBin(), ['chat', '--list-sessions', '--format', 'json'], {
+    cwd: workspaceDir || undefined,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+    timeout: 4000,
+  });
+  if (result.error || result.status !== 0) return [];
+
+  const ids = parseKiroSessionIds(result.stdout || result.stderr || '');
+  return ids
+    .slice(0, Math.max(0, limit))
+    .map((id, index) => ({ id, mtime: Number.MAX_SAFE_INTEGER - index }));
 }
 
 export function findLatestRolloutFileBySessionId(sessionId, notOlderThanMs = 0) {
@@ -399,6 +418,68 @@ function getGeminiSearchRoots(workspaceDir = '') {
   }
 
   return roots;
+}
+
+function getKiroBin() {
+  return String(process.env.KIRO_BIN || 'kiro').trim() || 'kiro';
+}
+
+function parseKiroSessionIds(raw) {
+  const text = stripAnsiControl(String(raw || '')).trim();
+  if (!text) return [];
+
+  const fromJson = parseKiroSessionIdsFromJson(text);
+  if (fromJson.length) return fromJson;
+
+  const uuidMatches = text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/ig);
+  return dedupeKeepOrder(uuidMatches || []);
+}
+
+function parseKiroSessionIdsFromJson(raw) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  return collectKiroSessionIdsFromJson(parsed);
+}
+
+function collectKiroSessionIdsFromJson(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return dedupeKeepOrder(value.flatMap((item) => collectKiroSessionIdsFromJson(item)));
+  }
+  if (typeof value !== 'object') return [];
+
+  const direct = String(value.sessionId || value.session_id || value.id || '').trim();
+  if (direct) return [direct];
+
+  const nested = [];
+  if (Array.isArray(value.sessions)) {
+    nested.push(...value.sessions.flatMap((item) => collectKiroSessionIdsFromJson(item)));
+  }
+  return dedupeKeepOrder(nested);
+}
+
+function dedupeKeepOrder(values = []) {
+  const out = [];
+  const seen = new Set();
+  for (const value of values) {
+    const key = String(value || '').trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
+}
+
+function stripAnsiControl(value) {
+  return String(value || '')
+    .replace(/\u001B\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g, '')
+    .replace(/\u001B[@-_]/g, '')
+    .replace(/[\u0000-\u0008\u000B-\u001A\u001C-\u001F\u007F]/g, '');
 }
 
 function findFilesRecursive(root, predicate) {

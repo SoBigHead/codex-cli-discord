@@ -108,6 +108,40 @@ const PROVIDER_RUNTIME_SURFACES = Object.freeze({
       zh: 'CLI 没有暴露稳定的 raw config passthrough',
     }),
   }),
+  kiro: Object.freeze({
+    sessionTerm: Object.freeze({
+      en: Object.freeze({ singular: 'chat session', plural: 'chat sessions' }),
+      zh: Object.freeze({ singular: 'chat session', plural: 'chat sessions' }),
+    }),
+    recentSessionsTitle: Object.freeze({
+      en: 'Recent Kiro Chat Sessions',
+      zh: '最近 Kiro Chat Sessions',
+    }),
+    recentSessionsLookup: Object.freeze({
+      en: 'uses `kiro chat --list-sessions` from the current workspace',
+      zh: '通过当前 workspace 执行 `kiro chat --list-sessions` 获取',
+    }),
+    runtimeSummary: Object.freeze({
+      en: 'workspace chat sessions, workspace-bound resume, bot-managed compaction',
+      zh: 'workspace chat sessions、workspace 绑定 resume、bot 侧压缩',
+    }),
+    sessionStore: Object.freeze({
+      en: 'provider-managed session list (`kiro chat --list-sessions`)',
+      zh: 'provider 管理的会话列表（`kiro chat --list-sessions`）',
+    }),
+    resumeSurface: Object.freeze({
+      en: 'resume by session id via `--resume-id`; workspace changes reset the bound session',
+      zh: '通过 `--resume-id` 按 session id 恢复；切换 workspace 时会重置已绑定 session',
+    }),
+    nativeCompactSurface: Object.freeze({
+      en: 'native compaction is not exposed by the CLI',
+      zh: 'CLI 未暴露 native 压缩能力',
+    }),
+    rawConfigSurface: Object.freeze({
+      en: 'no stable raw config passthrough surface exposed by the CLI',
+      zh: 'CLI 没有暴露稳定的 raw config passthrough',
+    }),
+  }),
 });
 
 function getSurface(provider) {

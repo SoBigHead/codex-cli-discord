@@ -245,7 +245,7 @@ export function createTextCommandHandler({
         }
         const requested = parseProviderInput(arg);
         if (!requested) {
-          await safeReply(message, '用法：`!provider <codex|claude|gemini|status>`');
+          await safeReply(message, '用法：`!provider <codex|claude|gemini|kiro|status>`');
           break;
         }
         const { previous } = commandActions.setProvider(session, requested);

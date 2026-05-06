@@ -129,12 +129,15 @@ export function getProviderBin(provider, {
   codexBin = 'codex',
   claudeBin = 'claude',
   geminiBin = 'gemini',
+  kiroBin = 'kiro',
 } = {}) {
   switch (normalizeProvider(provider)) {
     case 'claude':
       return claudeBin;
     case 'gemini':
       return geminiBin;
+    case 'kiro':
+      return kiroBin;
     default:
       return codexBin;
   }
@@ -143,10 +146,11 @@ export function getProviderBin(provider, {
 function getCliHealthForBin({
   bin,
   envKey,
+  versionArgs = ['--version'],
   spawnEnv,
   safeError = (err) => String(err?.message || err || 'unknown error'),
 } = {}) {
-  const check = spawnSync(bin, ['--version'], {
+  const check = spawnSync(bin, versionArgs, {
     env: spawnEnv,
     stdio: ['ignore', 'pipe', 'pipe'],
     encoding: 'utf8',
@@ -179,21 +183,32 @@ function getCliHealthForBin({
   };
 }
 
+function getVersionArgsForProvider(provider) {
+  if (normalizeProvider(provider) === 'kiro') {
+    return ['version'];
+  }
+  return ['--version'];
+}
+
 export function getCliHealth(provider, {
   codexBin = 'codex',
   claudeBin = 'claude',
   geminiBin = 'gemini',
+  kiroBin = 'kiro',
   spawnEnv = process.env,
   safeError,
 } = {}) {
+  const normalizedProvider = normalizeProvider(provider);
   const bin = getProviderBin(provider, {
     codexBin,
     claudeBin,
     geminiBin,
+    kiroBin,
   });
   return getCliHealthForBin({
     bin,
     envKey: getProviderBinEnvName(provider),
+    versionArgs: getVersionArgsForProvider(normalizedProvider),
     spawnEnv,
     safeError,
   });

@@ -501,3 +501,39 @@ test('createRunnerArgsBuilder falls back to prompt context for Gemini', () => {
   assert.equal(args.at(-2), '--prompt');
   assert.equal(args.at(-1), '[Via agents-in-discord; discord_thread=thread-1]\n\nhello');
 });
+
+test('createRunnerArgsBuilder builds Kiro headless chat args with resume-id', () => {
+  const { buildSessionRunnerArgs } = createRunnerArgsBuilder({
+    defaultModel: 'kiro-pro',
+    normalizeProvider: (value) => value,
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: 'kiro-ultra', source: 'session override' }),
+    resolveFastModeSetting: () => ({ enabled: false, source: 'provider unsupported' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+  });
+
+  const args = buildSessionRunnerArgs({
+    provider: 'kiro',
+    session: {
+      provider: 'kiro',
+      mode: 'dangerous',
+      runnerSessionId: 'kiro-session-1',
+    },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+    systemPrompt: '[Via agents-in-discord; discord_thread=thread-1]',
+  });
+
+  assert.deepEqual(args, [
+    'chat',
+    '--no-interactive',
+    '--trust-all-tools',
+    '--model',
+    'kiro-ultra',
+    '--resume-id',
+    'kiro-session-1',
+    '[Via agents-in-discord; discord_thread=thread-1]\n\nhello',
+  ]);
+});

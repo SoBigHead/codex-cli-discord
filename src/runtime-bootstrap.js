@@ -415,14 +415,16 @@ export function renderMissingDiscordTokenHint({ botProvider = null, env = proces
   const hasCodexScopedToken = Boolean(String(env.CODEX__DISCORD_TOKEN || env.DISCORD_TOKEN_CODEX || '').trim());
   const hasClaudeScopedToken = Boolean(String(env.CLAUDE__DISCORD_TOKEN || env.DISCORD_TOKEN_CLAUDE || '').trim());
   const hasGeminiScopedToken = Boolean(String(env.GEMINI__DISCORD_TOKEN || env.DISCORD_TOKEN_GEMINI || '').trim());
+  const hasKiroScopedToken = Boolean(String(env.KIRO__DISCORD_TOKEN || env.DISCORD_TOKEN_KIRO || '').trim());
 
-  if (hasCodexScopedToken || hasClaudeScopedToken || hasGeminiScopedToken) {
+  if (hasCodexScopedToken || hasClaudeScopedToken || hasGeminiScopedToken || hasKiroScopedToken) {
     const availableProviders = [
       hasCodexScopedToken ? 'codex' : null,
       hasClaudeScopedToken ? 'claude' : null,
       hasGeminiScopedToken ? 'gemini' : null,
+      hasKiroScopedToken ? 'kiro' : null,
     ].filter(Boolean).join(', ');
-    return `Missing DISCORD_TOKEN in shared mode. Found provider-scoped tokens for: ${availableProviders}. Start with npm run start:codex / npm run start:claude / npm run start:gemini, or add a shared DISCORD_TOKEN.`;
+    return `Missing DISCORD_TOKEN in shared mode. Found provider-scoped tokens for: ${availableProviders}. Start with npm run start:codex / npm run start:claude / npm run start:gemini / npm run start:kiro, or add a shared DISCORD_TOKEN.`;
   }
 
   return 'Missing DISCORD_TOKEN in environment';
@@ -481,12 +483,19 @@ export function createDiscordClient({
   Partials,
   restProxyAgent = null,
 } = {}) {
+  const messageContentIntentEnabled = String(
+    process.env.DISCORD_MESSAGE_CONTENT_INTENT || 'true',
+  ).toLowerCase() !== 'false';
+  const intents = [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+  ];
+  if (messageContentIntentEnabled) {
+    intents.push(GatewayIntentBits.MessageContent);
+  }
+
   const bot = new Client({
-    intents: [
-      GatewayIntentBits.Guilds,
-      GatewayIntentBits.GuildMessages,
-      GatewayIntentBits.MessageContent,
-    ],
+    intents,
     partials: [Partials.Channel, Partials.Message],
   });
 

@@ -18,6 +18,8 @@ test('normalizeCommandName maps text and slash aliases to canonical names', () =
   assert.equal(normalizeCommandName('defaultdir'), 'setdefaultdir');
   assert.equal(normalizeCommandName('project_sessions'), 'sessions');
   assert.equal(normalizeCommandName('chat_resume'), 'resume');
+  assert.equal(normalizeCommandName('kiro_sessions'), 'sessions');
+  assert.equal(normalizeCommandName('kiro_resume'), 'resume');
 });
 
 test('getActionButtonCommandNames exposes canonical button-safe commands', () => {
@@ -42,8 +44,8 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.equal(Array.isArray(newEntry.aliases), false);
   assert.ok(settingsEntry);
   assert.deepEqual(cancelEntry.aliases, ['abort']);
-  assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'chat_sessions']);
-  assert.deepEqual(resumeEntry.aliases, ['rollout_resume', 'project_resume', 'chat_resume']);
+  assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'chat_sessions', 'kiro_sessions']);
+  assert.deepEqual(resumeEntry.aliases, ['rollout_resume', 'project_resume', 'chat_resume', 'kiro_resume']);
   assert.ok(fastEntry);
   assert.ok(runtimeEntry);
   assert.ok(forkEntry);

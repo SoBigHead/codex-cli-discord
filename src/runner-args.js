@@ -3,6 +3,7 @@ import { buildCodexPermissionArgs } from './codex-permissions.js';
 import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
 import { createGeminiProviderAdapter } from './providers/gemini.js';
+import { createKiroProviderAdapter } from './providers/kiro.js';
 import { createProviderAdapterRegistry } from './providers/index.js';
 
 export function uniqueDirs(dirs = []) {
@@ -64,6 +65,9 @@ export function createRunnerArgsBuilder({
     }),
     createGeminiProviderAdapter({
       buildArgs: ({ session, prompt, systemPrompt = '' }) => buildGeminiArgs({ session, prompt, systemPrompt }),
+    }),
+    createKiroProviderAdapter({
+      buildArgs: ({ session, prompt, systemPrompt = '' }) => buildKiroArgs({ session, prompt, systemPrompt }),
     }),
   ]);
 
@@ -189,10 +193,26 @@ export function createRunnerArgsBuilder({
     return args;
   }
 
+  function buildKiroArgs({ session, prompt, systemPrompt = '' }) {
+    const args = ['chat', '--no-interactive'];
+    const model = resolveModelSetting(session).value || defaultModel;
+    const sessionId = getSessionId(session);
+    const promptText = composePromptWithSystemFallback(prompt, systemPrompt);
+
+    if (session.mode === 'dangerous') {
+      args.push('--trust-all-tools');
+    }
+    if (model) args.push('--model', model);
+    if (sessionId) args.push('--resume-id', sessionId);
+    args.push(promptText);
+    return args;
+  }
+
   return {
     buildSessionRunnerArgs,
     buildCodexArgs,
     buildClaudeArgs,
     buildGeminiArgs,
+    buildKiroArgs,
   };
 }

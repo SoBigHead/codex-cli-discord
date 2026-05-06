@@ -473,7 +473,7 @@ export function createSettingsPanel({
         if (botProvider) return [];
         return [
           new ActionRowBuilder().addComponents(
-            ...['codex', 'claude', 'gemini'].map((provider) => new ButtonBuilder()
+            ...['codex', 'claude', 'gemini', 'kiro'].map((provider) => new ButtonBuilder()
               .setCustomId(buildSettingsComponentId('set', 'provider', provider, userId))
               .setLabel(provider)
               .setStyle(snapshot.provider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),

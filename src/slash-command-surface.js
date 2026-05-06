@@ -49,10 +49,33 @@ export async function registerSlashCommands({
       rest.setAgent(restProxyAgent);
     }
     const body = slashCommands.map(c => c.toJSON());
+    const guildTargets = [...client.guilds.cache.values()].map((guild) => ({
+      id: guild.id,
+      name: guild.name || guild.id,
+    }));
 
-    for (const guild of client.guilds.cache.values()) {
+    if (!guildTargets.length) {
+      try {
+        const fetched = await client.guilds.fetch();
+        for (const guild of fetched.values()) {
+          guildTargets.push({
+            id: guild.id,
+            name: guild.name || guild.id,
+          });
+        }
+      } catch (fetchErr) {
+        logger.warn(`⚠️ Failed to fetch guild list for slash registration: ${fetchErr?.message || fetchErr}`);
+      }
+    }
+
+    if (!guildTargets.length) {
+      logger.warn('⚠️ No guilds available for slash command registration.');
+      return;
+    }
+
+    for (const guild of guildTargets) {
       await rest.put(Routes.applicationGuildCommands(client.user.id, guild.id), { body });
-      logger.log(`📝 Registered ${body.length} slash commands in guild: ${guild.name}`);
+      logger.log(`📝 Registered ${body.length} slash commands in guild: ${guild.name} (${guild.id})`);
     }
   } catch (err) {
     logger.error('Failed to register slash commands:', err);

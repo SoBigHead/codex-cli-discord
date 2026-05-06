@@ -5,6 +5,7 @@ import {
   handleClaudeRunnerEvent,
   handleCodexRunnerEvent,
   handleGeminiRunnerEvent,
+  handleKiroRunnerEvent,
 } from '../src/runner-event-handlers.js';
 import {
   extractAgentMessageText,
@@ -277,4 +278,37 @@ test('handleClaudeRunnerEvent captures visible tool_result text from Claude sess
   assert.deepEqual(state.meta.claudeToolResultMessages, ['## 角色卡 #1\n\n完整正文']);
   assert.deepEqual(state.messages, []);
   assert.deepEqual(state.finalAnswerMessages, []);
+});
+
+test('handleKiroRunnerEvent captures session and assistant output', () => {
+  const state = {
+    messages: [],
+    finalAnswerMessages: [],
+    reasonings: [],
+    logs: [],
+    usage: null,
+    threadId: null,
+    meta: {},
+  };
+  const bridges = [];
+
+  handleKiroRunnerEvent({
+    type: 'session.created',
+    session_id: 'kiro-session-1',
+  }, state, (threadId) => bridges.push(threadId));
+
+  handleKiroRunnerEvent({
+    type: 'assistant',
+    output_text: 'Kiro ready.',
+  }, state, () => {});
+
+  handleKiroRunnerEvent({
+    type: 'result',
+    usage: { input_tokens: 11, output_tokens: 5 },
+  }, state, () => {});
+
+  assert.equal(state.threadId, 'kiro-session-1');
+  assert.deepEqual(state.finalAnswerMessages, ['Kiro ready.']);
+  assert.deepEqual(state.usage, { input_tokens: 11, output_tokens: 5 });
+  assert.deepEqual(bridges, ['kiro-session-1']);
 });
