@@ -323,7 +323,9 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
               { name: 'done 标记完成', value: 'done' },
               { name: 'clear 清除 goal', value: 'clear' },
               { name: 'budget 设置预算', value: 'budget' },
-            ));
+            ))
+          .addStringOption(o => o.setName('objective').setDescription('set 时填写目标；带附件请用普通消息 !goal').setRequired(false))
+          .addStringOption(o => o.setName('token_budget').setDescription('token 预算，如 120000；clear 清除预算').setRequired(false));
       },
     },
     {

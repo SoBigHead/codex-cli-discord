@@ -21,6 +21,7 @@ import {
   formatProjectUpgradeReport,
   parseProjectUpgradeTextInput,
 } from './project-upgrade.js';
+import { buildPromptFromMessage, formatAttachmentsForPrompt } from './discord-message-input.js';
 
 function isExistingDirectory(dir) {
   try {
@@ -35,6 +36,30 @@ function formatModelCommandHelp(provider = 'codex') {
     return '用法：`!model <name|default>`\n例：`!model sonnet` / `!model opus` / `!model default`';
   }
   return '用法：`!model <name|default>`\n例：`!model o3` / `!model gpt-5.3-codex` / `!model default`';
+}
+
+function buildGoalTextInput(arg = '', attachments = null) {
+  const text = String(arg || '').trim();
+  const attachmentBlock = formatAttachmentsForPrompt(attachments);
+  if (!attachmentBlock) return text || 'status';
+
+  const [verbRaw, ...rest] = text.split(/\s+/);
+  const verb = String(verbRaw || '').trim().toLowerCase();
+  const controlVerbs = new Set([
+    'status', 'show', 'state', '查看', '状态',
+    'clear', 'delete', 'remove', 'unset', '清除',
+    'pause', 'paused', '暂停',
+    'resume', 'active', 'start', 'continue', '恢复', '继续',
+    'done', 'complete', 'completed', 'finish', '完成',
+    'budget', 'token_budget', 'tokens',
+  ]);
+
+  if (controlVerbs.has(verb)) return text;
+  if (verb === 'set') {
+    const objective = buildPromptFromMessage(rest.join(' '), attachments);
+    return `set ${objective}`;
+  }
+  return buildPromptFromMessage(text, attachments);
 }
 
 export function createTextCommandHandler({
@@ -530,7 +555,7 @@ export function createTextCommandHandler({
       case 'goal': {
         const language = getSessionLanguage(session);
         const provider = getSessionProvider(session);
-        const action = parseCodexGoalTextInput(arg || 'status');
+        const action = parseCodexGoalTextInput(buildGoalTextInput(arg, message.attachments));
         try {
           const result = await executeCodexGoalAction({
             action,

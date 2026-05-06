@@ -545,7 +545,7 @@ test('createSlashCommandRouter rejects fork for providers without native fork', 
   assert.match(state.replies[0].content, /不支持原生 fork/);
 });
 
-test('createSlashCommandRouter opens a required goal set modal', async () => {
+test('createSlashCommandRouter rejects slash goal set without an objective instead of opening a modal', async () => {
   const modals = [];
   const state = createRouterState();
   const interaction = createInteraction('cx_goal', { action: 'set' });
@@ -562,16 +562,61 @@ test('createSlashCommandRouter opens a required goal set modal', async () => {
   });
 
   assert.equal(handled, true);
-  assert.equal(modals.length, 1);
-  assert.equal(modals[0].data.customId, 'goalm:set:user-1');
-  const objectiveInput = modals[0].data.components[0].data.components[0].data;
-  const budgetInput = modals[0].data.components[1].data.components[0].data;
-  assert.equal(objectiveInput.customId, 'goal_objective');
-  assert.equal(objectiveInput.required, true);
-  assert.equal(objectiveInput.maxLength, 4000);
-  assert.equal(budgetInput.customId, 'goal_token_budget');
-  assert.equal(budgetInput.required, false);
-  assert.equal(state.replies.length, 0);
+  assert.equal(modals.length, 0);
+  assert.match(state.replies[0].content, /goal objective is required/);
+});
+
+test('createSlashCommandRouter sets a Codex goal from slash objective fields', async () => {
+  const goalCalls = [];
+  const queuedPrompts = [];
+  const state = createRouterState({
+    getSessionId: () => 'thread-1',
+    async setCodexThreadGoal(options) {
+      goalCalls.push(options);
+      return {
+        goal: {
+          threadId: options.threadId,
+          objective: options.objective,
+          status: options.status,
+          tokenBudget: options.tokenBudget,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      };
+    },
+    async enqueuePrompt(message, key, content) {
+      queuedPrompts.push({ message, key, content });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
+    },
+  });
+
+  const handled = await state.router({
+    interaction: createInteraction('cx_goal', {
+      action: 'set',
+      objective: 'ship Discord goal command',
+      token_budget: '90000',
+    }),
+    commandName: 'goal',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(goalCalls, [{
+    threadId: 'thread-1',
+    objective: 'ship Discord goal command',
+    status: 'active',
+    tokenBudget: 90000,
+  }]);
+  assert.match(state.replies[0].content, /goal 已设置/);
+  assert.match(state.replies[0].content, /ship Discord goal command/);
+  assert.match(state.replies[0].content, /已触发自动续跑/);
+  assert.equal(queuedPrompts.length, 1);
+  assert.equal(queuedPrompts[0].key, 'channel-1');
+  assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
 });
 
 test('createSlashCommandRouter sets a Codex goal from modal submit', async () => {

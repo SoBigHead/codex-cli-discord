@@ -243,8 +243,7 @@ export function createSlashCommandRouter({
   function shouldHandleBeforeDefer({ interaction, commandName } = {}) {
     const normalizedCommand = normalizeCommandName(commandName || interaction?.commandName || '');
     if (normalizedCommand !== 'goal') return false;
-    const action = String(interaction?.options?.getString?.('action') || '').trim().toLowerCase();
-    return action === 'set' || action === 'budget';
+    return false;
   }
 
   async function maybeEnqueueCodexGoalContinuation({ action, result, interaction, key, session }) {
@@ -737,21 +736,10 @@ export function createSlashCommandRouter({
     const language = getSessionLanguage(session);
     const provider = getSessionProvider(session);
     const rawAction = String(interaction.options.getString('action') || 'status').trim().toLowerCase();
-    if (rawAction === 'set' || rawAction === 'budget') {
-      if (!canShowGoalModal() || typeof interaction.showModal !== 'function') {
-        await respond({
-          content: '❌ 当前环境不支持 goal 输入弹窗。',
-          flags: 64,
-        });
-        return;
-      }
-      await interaction.showModal(rawAction === 'set'
-        ? buildGoalSetModal(interaction.user?.id)
-        : buildGoalBudgetModal(interaction.user?.id));
-      return;
-    }
     const action = parseCodexGoalSlashInput({
       action: rawAction,
+      objective: interaction.options.getString('objective') || '',
+      tokenBudget: interaction.options.getString('token_budget') || '',
     });
     try {
       const result = await executeCodexGoalAction({

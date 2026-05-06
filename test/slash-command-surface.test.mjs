@@ -116,7 +116,7 @@ test('buildSlashCommands includes workspace commands and aliases', () => {
   assert.ok(!names.includes('cx_process_lines'));
 
   const goal = commands.find((command) => command.name === 'cx_goal');
-  assert.deepEqual(goal.options.map((option) => option.name), ['action']);
+  assert.deepEqual(goal.options.map((option) => option.name), ['action', 'objective', 'token_budget']);
   assert.deepEqual(goal.options[0].choices.map((choice) => choice.value), [
     'status',
     'set',

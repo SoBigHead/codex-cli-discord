@@ -3,10 +3,11 @@ import assert from 'node:assert/strict';
 
 import { createTextCommandHandler } from '../src/text-command-handler.js';
 
-function createMessage() {
+function createMessage(overrides = {}) {
   return {
     author: { id: 'user-1' },
     channel: { id: 'channel-1' },
+    ...overrides,
   };
 }
 
@@ -419,6 +420,57 @@ test('createTextCommandHandler sets Codex goal from free text', async () => {
   assert.equal(queuedPrompts.length, 1);
   assert.equal(queuedPrompts[0].key, 'thread-1');
   assert.match(queuedPrompts[0].content, /Continue working toward the active Codex goal/);
+});
+
+test('createTextCommandHandler includes goal message attachments in the objective', async () => {
+  const replies = [];
+  const calls = [];
+  const queuedPrompts = [];
+  const session = { provider: 'codex', language: 'zh', runnerSessionId: 'thread-1' };
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    getSessionId: (currentSession) => currentSession.runnerSessionId,
+    getSessionProvider: (currentSession) => currentSession.provider,
+    getSessionLanguage: () => 'zh',
+    async setCodexThreadGoal(options) {
+      calls.push(options);
+      return {
+        goal: {
+          threadId: options.threadId,
+          objective: options.objective,
+          status: options.status,
+          tokenBudget: null,
+          tokensUsed: 0,
+          timeUsedSeconds: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      };
+    },
+    async enqueuePrompt(message, key, content) {
+      queuedPrompts.push({ message, key, content });
+      return { ok: true, enqueued: true, queuedAhead: 0 };
+    },
+    safeReply: async (_message, payload) => {
+      replies.push(payload);
+    },
+  });
+  const attachments = new Map([
+    ['a1', {
+      name: 'brief.png',
+      contentType: 'image/png',
+      size: 1234,
+      url: 'https://cdn.example/brief.png',
+    }],
+  ]);
+
+  await handleCommand(createMessage({ attachments }), 'thread-1', '!goal use this image as the goal spec');
+
+  assert.match(calls[0].objective, /use this image as the goal spec/);
+  assert.match(calls[0].objective, /Attachments:/);
+  assert.match(calls[0].objective, /brief\.png/);
+  assert.equal(queuedPrompts[0].message.attachments, attachments);
+  assert.match(replies[0], /brief\.png/);
 });
 
 test('createTextCommandHandler clears Codex goal', async () => {
