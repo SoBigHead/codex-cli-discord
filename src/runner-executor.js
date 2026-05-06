@@ -389,7 +389,11 @@ export function createRunnerExecutor({
         }
         const cancelled = Boolean(timedOut || options.wasCancelled?.());
         if (goalCompleted && finalAnswerMessages.length === 0) {
-          finalAnswerMessages.push(formatCodexGoalCompletedMessage(goalCompleted));
+          if (messages.length) {
+            finalAnswerMessages.push(...messages);
+          } else {
+            finalAnswerMessages.push(formatCodexGoalCompletedMessage(goalCompleted));
+          }
         }
         const ok = stoppedAfterGoalComplete || (!cancelled && code === 0);
         finish({

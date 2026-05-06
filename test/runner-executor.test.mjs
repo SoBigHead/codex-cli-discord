@@ -164,7 +164,12 @@ test('createRunnerExecutor stops Codex goal continuation when official goal stat
     },
     spawnFn: () => {
       queueMicrotask(() => {
-        child.stdout.emit('data', Buffer.from('{"type":"thread.started","thread_id":"goal-thread-1"}\n'));
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"thread.started","thread_id":"goal-thread-1"}',
+          '{"type":"item.completed","item":{"type":"agent_message","phase":"commentary","text":"先完成实现。"}}',
+          '{"type":"item.completed","item":{"type":"agent_message","phase":"commentary","text":"再完成线上验收。"}}',
+          '',
+        ].join('\n')));
       });
       return child;
     },
@@ -182,6 +187,6 @@ test('createRunnerExecutor stops Codex goal continuation when official goal stat
   assert.equal(result.cancelled, false);
   assert.equal(result.error, '');
   assert.equal(result.threadId, 'goal-thread-1');
-  assert.match(result.finalAnswerMessages.join('\n'), /Codex goal 已完成/);
+  assert.deepEqual(result.finalAnswerMessages, ['先完成实现。', '再完成线上验收。']);
   assert.deepEqual(goalCalls, ['goal-thread-1']);
 });
