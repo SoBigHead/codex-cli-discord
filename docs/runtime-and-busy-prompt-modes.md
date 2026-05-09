@@ -24,6 +24,8 @@ Target matrix after runner work:
 | Claude Code | stream-json hot process | realtime stream-json user input while a turn is active |
 | Gemini | not specified | queue only |
 
+Codex 0.130 adds app-server pagination for thread turns through `thread/turns/list`, including an `itemsView` option (`notLoaded`, `summary`, `full`). Use that path for reading large Codex long-thread history instead of loading whole threads up front. The generated `thread/turns/items/list` protocol entry is not wired in the current 0.130 app-server build, so callers must not depend on it yet.
+
 Workspace locking does not conflict with this model. A queued prompt waits for the next turn and acquires the workspace lock then. A steered prompt, when implemented, belongs to the same active turn and inherits the same workspace lock instead of competing for it.
 
 Status and settings must always show effective behavior, not just the requested value. The requested value may be stored so users can preselect `steer_if_possible`, but execution must stay fail-closed until the provider path is real.

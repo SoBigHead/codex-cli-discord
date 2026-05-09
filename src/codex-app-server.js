@@ -109,6 +109,54 @@ function buildThreadGoalParams({ threadId } = {}) {
   return { threadId: normalizedThreadId };
 }
 
+function normalizeEnumOption(value, allowed, label) {
+  if (value === undefined || value === null) return null;
+  const text = String(value || '').trim();
+  if (!text) return null;
+  if (!allowed.includes(text)) {
+    throw new Error(`invalid ${label}: ${value}`);
+  }
+  return text;
+}
+
+function normalizeLimit(value) {
+  if (value === undefined || value === null) return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(`invalid limit: ${value}`);
+  }
+  return number;
+}
+
+function buildPaginationOptions({ cursor = null, limit = null, sortDirection = null } = {}) {
+  const params = {};
+  const normalizedCursor = normalizeText(cursor);
+  if (normalizedCursor) params.cursor = normalizedCursor;
+  const normalizedLimit = normalizeLimit(limit);
+  if (normalizedLimit !== null) params.limit = normalizedLimit;
+  const normalizedSortDirection = normalizeEnumOption(sortDirection, ['asc', 'desc'], 'sortDirection');
+  if (normalizedSortDirection) params.sortDirection = normalizedSortDirection;
+  return params;
+}
+
+function buildThreadTurnsListParams({
+  threadId,
+  itemsView = null,
+  ...pagination
+} = {}) {
+  const normalizedThreadId = normalizeText(threadId);
+  if (!normalizedThreadId) {
+    throw new Error('threadId is required for Codex thread turns');
+  }
+  const params = {
+    threadId: normalizedThreadId,
+    ...buildPaginationOptions(pagination),
+  };
+  const normalizedItemsView = normalizeEnumOption(itemsView, ['notLoaded', 'summary', 'full'], 'itemsView');
+  if (normalizedItemsView) params.itemsView = normalizedItemsView;
+  return params;
+}
+
 export function createCodexAppServerClient({
   codexBin = 'codex',
   env = process.env,
@@ -255,9 +303,14 @@ export function createCodexAppServerClient({
     return request('thread/goal/clear', buildThreadGoalParams(options));
   }
 
+  async function listThreadTurns(options = {}) {
+    return request('thread/turns/list', buildThreadTurnsListParams(options));
+  }
+
   return {
     clearThreadGoal,
     getThreadGoal,
+    listThreadTurns,
     request,
     forkThread,
     setThreadGoal,
@@ -287,4 +340,8 @@ export async function setCodexThreadGoal(options = {}) {
 
 export async function clearCodexThreadGoal(options = {}) {
   return createGoalClient(options).clearThreadGoal(options);
+}
+
+export async function listCodexThreadTurns(options = {}) {
+  return createCodexAppServerClient(options).listThreadTurns(options);
 }

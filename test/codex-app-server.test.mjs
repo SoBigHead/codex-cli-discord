@@ -8,6 +8,7 @@ import {
   clearCodexThreadGoal,
   forkCodexThread,
   getCodexThreadGoal,
+  listCodexThreadTurns,
   setCodexThreadGoal,
 } from '../src/codex-app-server.js';
 
@@ -186,4 +187,69 @@ test('Codex goal helpers support get and clear requests', async () => {
     ['app-server', '--listen', 'stdio://', '--enable', 'goals'],
     ['app-server', '--listen', 'stdio://', '--enable', 'goals'],
   ]);
+});
+
+test('Codex thread turn helper sends paginated 0.130 app-server requests', async () => {
+  const seen = [];
+  const fake = createFakeSpawn({
+    onRequest(request) {
+      seen.push(request.method);
+      if (request.method === 'initialize') {
+        return { id: request.id, result: { codexHome: '/tmp/codex' } };
+      }
+      if (request.method === 'thread/turns/list') {
+        assert.deepEqual(request.params, {
+          threadId: 'thread-1',
+          cursor: 'cursor-1',
+          limit: 2,
+          sortDirection: 'desc',
+          itemsView: 'summary',
+        });
+        return {
+          id: request.id,
+          result: {
+            data: [
+              { id: 'turn-2', items: [] },
+              { id: 'turn-1', items: [] },
+            ],
+            nextCursor: 'cursor-2',
+            backwardsCursor: 'cursor-0',
+          },
+        };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    },
+  });
+
+  const turns = await listCodexThreadTurns({
+    codexBin: 'codex-test',
+    spawnFn: fake.spawnFn,
+    env: { HOME: '/tmp/home' },
+    threadId: ' thread-1 ',
+    cursor: ' cursor-1 ',
+    limit: 2,
+    sortDirection: 'desc',
+    itemsView: 'summary',
+  });
+
+  assert.equal(turns.nextCursor, 'cursor-2');
+  assert.deepEqual(seen, [
+    'initialize',
+    'thread/turns/list',
+  ]);
+});
+
+test('Codex thread turn helpers reject invalid pagination before spawning', async () => {
+  let spawned = false;
+  await assert.rejects(
+    () => listCodexThreadTurns({
+      threadId: 'thread-1',
+      itemsView: 'all',
+      spawnFn() {
+        spawned = true;
+      },
+    }),
+    /invalid itemsView/,
+  );
+  assert.equal(spawned, false);
 });
