@@ -282,6 +282,14 @@ export async function safeReply(message, payload, {
       });
     }
 
+    if (isTransientDiscordNetworkError(err)) {
+      logger.warn(`⚠️ message.reply failed after transient Discord network errors for ${message?.id || '(unknown)'}, fallback to channel.send`);
+      return safeChannelSend(message, channelPayload, {
+        logger,
+        getActiveClient,
+      });
+    }
+
     if (!isStaleDiscordClientError(err)) throw err;
 
     const recovered = await recoverReplyWithLiveClient(message, payload, channelPayload, {

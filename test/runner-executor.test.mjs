@@ -255,6 +255,150 @@ test('createRunnerExecutor stops Codex goal continuation when official goal stat
   assert.deepEqual(goalCalls, ['goal-thread-1']);
 });
 
+test('createRunnerExecutor stops Codex goal continuation when Codex reports a blocker', async () => {
+  let killed = false;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => {
+    killed = true;
+    child.killed = true;
+    queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+  };
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: (value) => String(value || '').trim().toLowerCase(),
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'codex',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveFastModeSetting: () => ({ enabled: true, source: 'config.toml' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    codexGoalMonitorIntervalMs: 10_000,
+    codexGoalCompletionGraceMs: 1,
+    async getCodexThreadGoal({ threadId }) {
+      return {
+        goal: {
+          threadId,
+          objective: 'ship goal mode',
+          status: 'active',
+        },
+      };
+    },
+    spawnFn: () => {
+      queueMicrotask(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"thread.started","thread_id":"goal-thread-1"}',
+          '{"type":"item.completed","item":{"type":"agent_message","phase":"final_answer","text":"goal 还是 active。当前只差实体手机跑满 60 秒后的真实 JSON。没有这份记录，验收闭环不成立，所以现在不能交付，也不能关 goal。update_goal 未调用。"}}',
+          '',
+        ].join('\n')));
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'goal-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: CODEX_GOAL_CONTINUATION_PROMPT,
+    onEvent: () => {},
+  });
+
+  assert.equal(killed, true);
+  assert.equal(result.ok, true);
+  assert.equal(result.cancelled, false);
+  assert.equal(result.error, '');
+  assert.deepEqual(result.finalAnswerMessages, [
+    'goal 还是 active。当前只差实体手机跑满 60 秒后的真实 JSON。没有这份记录，验收闭环不成立，所以现在不能交付，也不能关 goal。update_goal 未调用。',
+  ]);
+  assert.ok(result.logs.includes('Codex goal reported a blocker; stopping goal continuation runner.'));
+});
+
+test('createRunnerExecutor stops a regular Codex goal run when Codex reports a blocker', async () => {
+  let killed = false;
+  let goalCalls = 0;
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  child.kill = () => {
+    killed = true;
+    child.killed = true;
+    queueMicrotask(() => child.emit('close', null, 'SIGTERM'));
+  };
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: (value) => String(value || '').trim().toLowerCase(),
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'codex',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveFastModeSetting: () => ({ enabled: true, source: 'config.toml' }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: (target) => target.kill(),
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    codexGoalMonitorIntervalMs: 1,
+    async getCodexThreadGoal() {
+      goalCalls += 1;
+      return {
+        goal: {
+          objective: 'ship goal mode',
+          status: 'active',
+        },
+      };
+    },
+    spawnFn: () => {
+      setTimeout(() => {
+        child.stdout.emit('data', Buffer.from([
+          '{"type":"thread.started","thread_id":"goal-thread-1"}',
+          '{"type":"item.completed","item":{"type":"agent_message","phase":"final_answer","text":"目标未完成。实体手机 60 秒真实 JSON 仍缺。没有这份验收记录，不能关闭 goal。update_goal 未调用。"}}',
+          '',
+        ].join('\n')));
+      }, 5);
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'codex', mode: 'safe', runnerSessionId: 'goal-thread-1' },
+    sessionKey: 'discord-thread-1',
+    workspaceDir: '/tmp/workspace',
+    prompt: '看看 goal 的状态，继续推进 goal 直到可以交付',
+    onEvent: () => {},
+  });
+
+  assert.equal(killed, true);
+  assert.equal(goalCalls, 0);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.finalAnswerMessages, [
+    '目标未完成。实体手机 60 秒真实 JSON 仍缺。没有这份验收记录，不能关闭 goal。update_goal 未调用。',
+  ]);
+});
+
 test('createRunnerExecutor lets Codex goal completion emit its final summary before stopping', async () => {
   let killed = false;
   const child = new EventEmitter();

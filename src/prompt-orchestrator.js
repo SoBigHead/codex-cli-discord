@@ -308,7 +308,7 @@ export function createPromptOrchestrator({
         : null,
     });
 
-    await message.channel.sendTyping();
+    void message.channel.sendTyping().catch(() => {});
     const typingInterval = setInterval(() => {
       message.channel.sendTyping().catch(() => {});
     }, 8000);

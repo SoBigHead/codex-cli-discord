@@ -252,6 +252,7 @@ export function createRunnerExecutor({
       let timedOut = false;
       let goalCompleted = null;
       let stoppedAfterGoalComplete = false;
+      let stoppedAfterGoalBlocked = false;
       let goalPollInFlight = false;
       let goalMonitorTimer = null;
       let goalCompletionStopTimer = null;
@@ -307,8 +308,17 @@ export function createRunnerExecutor({
         goalCompletionStopTimer.unref?.();
       };
 
+      const stopGoalContinuationAfterBlocker = (text) => {
+        if (!options.goalMonitor?.enabled || stoppedAfterGoalBlocked || child.killed) return;
+        if (!isCodexGoalBlockerMessage(text)) return;
+        stoppedAfterGoalBlocked = true;
+        logs.push('Codex goal reported a blocker; stopping goal continuation runner.');
+        stopChildProcess(child);
+      };
+
       const pollGoalCompletion = async () => {
         if (!options.goalMonitor?.enabled || goalPollInFlight || resolved) return;
+        if (!options.goalMonitor.stopOnComplete) return;
         const monitoredThreadId = String(threadId || options.goalMonitor.threadId || '').trim();
         if (!monitoredThreadId) return;
         goalPollInFlight = true;
@@ -329,6 +339,7 @@ export function createRunnerExecutor({
 
       const startGoalMonitor = () => {
         if (!options.goalMonitor?.enabled || goalMonitorTimer) return;
+        if (!options.goalMonitor.stopOnComplete) return;
         goalMonitorTimer = setInterval(() => {
           void pollGoalCompletion();
         }, Math.max(100, Number(options.goalMonitor.intervalMs) || 2000));
@@ -400,6 +411,7 @@ export function createRunnerExecutor({
         usage = state.usage;
         threadId = state.threadId;
         startGoalMonitor();
+        stopGoalContinuationAfterBlocker(finalAnswerMessages[finalAnswerMessages.length - 1]);
       };
 
       const finish = (result) => {
@@ -462,10 +474,10 @@ export function createRunnerExecutor({
             finalAnswerMessages.push(formatCodexGoalCompletedMessage(goalCompleted));
           }
         }
-        const ok = stoppedAfterGoalComplete || (!cancelled && code === 0);
+        const ok = stoppedAfterGoalComplete || stoppedAfterGoalBlocked || (!cancelled && code === 0);
         finish({
           ok,
-          cancelled: stoppedAfterGoalComplete ? false : cancelled,
+          cancelled: stoppedAfterGoalComplete || stoppedAfterGoalBlocked ? false : cancelled,
           timedOut,
           error: ok ? '' : buildRunnerError({ provider, code, signal, logs }),
           logs,
@@ -483,11 +495,12 @@ export function createRunnerExecutor({
   function createCodexGoalMonitor({ provider, session, prompt } = {}) {
     if (normalizeProvider(provider) !== 'codex') return null;
     if (typeof getCodexThreadGoal !== 'function') return null;
-    if (!isCodexGoalContinuationPrompt(prompt)) return null;
     const threadId = String(getSessionId(session) || '').trim();
+    if (!threadId) return null;
     return {
       enabled: true,
       threadId,
+      stopOnComplete: isCodexGoalContinuationPrompt(prompt),
       intervalMs: codexGoalMonitorIntervalMs,
       completionGraceMs: codexGoalCompletionGraceMs,
       getCodexThreadGoal,
@@ -512,6 +525,41 @@ export function createRunnerExecutor({
 function isCodexGoalContinuationPrompt(prompt) {
   const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
   return normalize(prompt) === normalize(CODEX_GOAL_CONTINUATION_PROMPT);
+}
+
+function isCodexGoalBlockerMessage(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!normalized) return false;
+  const blockerPattern = [
+    'blocked',
+    'blocker',
+    'cannot continue',
+    'cannot complete',
+    'cannot finish',
+    'cannot close',
+    'cannot deliver',
+    "can't continue",
+    "can't complete",
+    "can't finish",
+    "can't close",
+    "can't deliver",
+    '无法继续',
+    '不能继续',
+    '无法完成',
+    '不能完成',
+    '不能交付',
+    '不能关闭',
+    '不能标记',
+    '阻塞',
+    '仍缺',
+    '还缺',
+    '缺少',
+    '没有这份',
+    '没有验收',
+    '等待提供',
+  ].some((phrase) => normalized.includes(phrase));
+  if (!blockerPattern) return false;
+  return /goal|update_goal|目标|验收|evidence|记录|json|外部|实体手机/.test(normalized);
 }
 
 function formatCodexGoalCompletedMessage(goal) {

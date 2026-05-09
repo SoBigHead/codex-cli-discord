@@ -108,3 +108,35 @@ test('safeReply falls back to channel send after an expired interaction webhook 
   assert.deepEqual(sent, ['goal complete']);
   assert.deepEqual(result, { id: 'fallback-1' });
 });
+
+test('safeReply falls back to channel send after reply network retries are exhausted', async () => {
+  const sent = [];
+  let replyAttempts = 0;
+
+  const message = {
+    id: 'msg-1',
+    channelId: 'channel-1',
+    system: false,
+    channel: {
+      id: 'channel-1',
+      async send(payload) {
+        sent.push(payload);
+        return { id: 'fallback-1' };
+      },
+    },
+    async reply() {
+      replyAttempts += 1;
+      const err = new Error('Client network socket disconnected before secure TLS connection was established');
+      err.code = 'ECONNRESET';
+      throw err;
+    },
+  };
+
+  const result = await safeReply(message, 'network recovered by fallback', {
+    logger: createLogger(),
+  });
+
+  assert.equal(replyAttempts, 3);
+  assert.deepEqual(sent, ['network recovered by fallback']);
+  assert.deepEqual(result, { id: 'fallback-1' });
+});

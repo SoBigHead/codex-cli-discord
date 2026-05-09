@@ -186,6 +186,29 @@ test('createPromptOrchestrator.handlePrompt runs task updates session and replie
   });
 });
 
+test('createPromptOrchestrator.handlePrompt continues when Discord typing indicator fails', async () => {
+  const harness = createOrchestrator();
+  const { replyLog, orchestrator } = harness;
+  const message = {
+    id: 'msg-1',
+    channel: {
+      async sendTyping() {
+        throw new Error('Client network socket disconnected before secure TLS connection was established');
+      },
+      async send(payload) {
+        replyLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.equal(replyLog.length, 1);
+  assert.match(replyLog[0], /final answer/);
+});
+
 test('createPromptOrchestrator.handlePrompt clears pending Claude fork after first fork turn binds', async () => {
   const harness = createOrchestrator({
     runTask: async () => ({
