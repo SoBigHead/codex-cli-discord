@@ -178,6 +178,62 @@ test('createRunnerExecutor routes Codex long runtime to the app-server runner', 
   assert.equal(codexLongInput.systemPrompt, '[Via agents-in-discord; discord_thread=thread-1]');
 });
 
+test('createRunnerExecutor routes Codex long steer and rejects exec steer', async () => {
+  const steerInputs = [];
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: (value) => String(value || '').trim().toLowerCase(),
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'codex',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveCodexProfileSetting: () => ({ value: null, source: 'provider default', valid: true, isExplicit: false }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveFastModeSetting: () => ({ enabled: false, supported: true }),
+    resolveRuntimeModeSetting: (session) => ({ mode: session.runtimeMode || 'normal', supported: true }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    createCodexAppServerRunnerFn: () => ({
+      runTask() {
+        throw new Error('should not run task');
+      },
+      steerTask(input) {
+        steerInputs.push(input);
+        return Promise.resolve({ ok: true, steered: true, threadId: 'thread-1', turnId: 'turn-1' });
+      },
+      closeSession: () => false,
+      closeAll: () => 0,
+      getSnapshot: () => [],
+    }),
+  });
+
+  const steered = await executor.steerProviderTask({
+    session: { provider: 'codex', runtimeMode: 'long', runnerSessionId: 'thread-1' },
+    sessionKey: 'discord-thread-1',
+    prompt: 'adjust',
+  });
+  assert.deepEqual(steered, { ok: true, steered: true, threadId: 'thread-1', turnId: 'turn-1' });
+  assert.equal(steerInputs[0].sessionKey, 'discord-thread-1');
+  assert.equal(steerInputs[0].prompt, 'adjust');
+
+  const rejected = await executor.steerProviderTask({
+    session: { provider: 'codex', runtimeMode: 'normal', runnerSessionId: 'thread-1' },
+    sessionKey: 'discord-thread-1',
+    prompt: 'adjust',
+  });
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, 'unsupported_runtime');
+});
+
 test('createRunnerExecutor stops Codex goal continuation when official goal state becomes complete', async () => {
   let killed = false;
   const goalCalls = [];

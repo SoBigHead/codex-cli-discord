@@ -219,7 +219,7 @@ function createPanel({ session, botProvider = null, openWorkspaceBrowser, comman
           || (currentSession?.fastMode === null || currentSession?.fastMode === undefined ? 'config.toml' : 'session override'),
       }
       : { enabled: false, supported: false, source: 'provider unsupported' },
-    resolveRuntimeModeSetting: (currentSession) => currentSession?.provider === 'claude'
+    resolveRuntimeModeSetting: (currentSession) => currentSession?.provider === 'claude' || currentSession?.provider === 'codex'
       ? {
         mode: currentSession?.runtimeMode || currentSession?.inheritedRuntimeMode || 'normal',
         supported: true,
@@ -227,14 +227,18 @@ function createPanel({ session, botProvider = null, openWorkspaceBrowser, comman
           || (currentSession?.runtimeMode ? 'session override' : 'env default'),
       }
       : { mode: 'normal', supported: false, source: 'provider unsupported' },
-    resolveBusyPromptModeSetting: (currentSession) => ({
-      mode: currentSession?.busyPromptMode === 'steer_if_possible' ? 'queue' : (currentSession?.busyPromptMode || 'queue'),
-      requestedMode: currentSession?.busyPromptMode || 'queue',
-      canSteer: false,
-      supported: true,
-      source: currentSession?.busyPromptMode ? 'session override' : 'built-in default',
-      reason: currentSession?.busyPromptMode === 'steer_if_possible' ? 'steer unavailable' : null,
-    }),
+    resolveBusyPromptModeSetting: (currentSession) => {
+      const requestedMode = currentSession?.busyPromptMode || 'queue';
+      const canSteer = currentSession?.provider === 'codex' && currentSession?.runtimeMode === 'long';
+      return {
+        mode: requestedMode === 'steer_if_possible' && !canSteer ? 'queue' : requestedMode,
+        requestedMode,
+        canSteer,
+        supported: true,
+        source: currentSession?.busyPromptMode ? 'session override' : 'built-in default',
+        reason: requestedMode === 'steer_if_possible' && !canSteer ? 'steer unavailable' : null,
+      };
+    },
     resolveCompactStrategySetting: (currentSession) => ({
       strategy: currentSession?.compactStrategy || 'native',
       source: currentSession?.compactStrategy ? 'session override' : 'env default',
@@ -559,6 +563,27 @@ test('createSettingsPanel keeps steer disabled when runtime cannot actually stee
 
   assert.equal(session.busyPromptMode, 'queue');
   assert.match(updates[0].content, /运行中消息：排队/);
+});
+
+test('createSettingsPanel enables steer for Codex long runtime', () => {
+  const session = {
+    provider: 'codex',
+    language: 'zh',
+    mode: 'safe',
+    runtimeMode: 'long',
+    busyPromptMode: 'steer_if_possible',
+  };
+  const actualPanel = createPanel({ session });
+  const payload = actualPanel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'runtime',
+  });
+  const busyRow = payload.components[2];
+  const steerButton = busyRow.components.find((component) => component.data.customId === 'stg:set:busy_prompt:steer:12345');
+  assert.equal(steerButton.data.disabled, false);
+  assert.equal(steerButton.data.style, ButtonStyle.Primary);
 });
 
 test('createSettingsPanel shows parent channel as the inherited fast mode source for threads', () => {

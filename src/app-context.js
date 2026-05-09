@@ -162,6 +162,7 @@ export function createAppContext({
       ...channelQueueOptions,
       getSession: sessionStore.getSession,
       resolveSecurityContext: securityPolicy.resolveSecurityContext,
+      resolveBusyPromptModeSetting: sessionSettings.resolveBusyPromptModeSetting,
       slashRef: promptSlashRef,
     },
     factories: promptRuntimeFactories,

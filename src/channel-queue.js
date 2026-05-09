@@ -4,11 +4,13 @@ export function createChannelQueue({
   getChannelState,
   getSession,
   resolveSecurityContext,
+  resolveBusyPromptModeSetting = () => ({ mode: 'queue', canSteer: false }),
   slashRef = (name) => `/${name}`,
   safeReply,
   safeError,
   getCurrentUserId,
   handlePrompt,
+  steerPrompt = null,
   rememberFailedPrompt = () => null,
   clearLastFailedPrompt = () => {},
   getLastFailedPrompt = () => null,
@@ -24,9 +26,76 @@ export function createChannelQueue({
     return fromClient || null;
   }
 
+  function hasMessageAttachments(message) {
+    const attachments = message?.attachments;
+    if (!attachments) return false;
+    if (typeof attachments.size === 'number') return attachments.size > 0;
+    if (Array.isArray(attachments)) return attachments.length > 0;
+    if (typeof attachments.length === 'number') return attachments.length > 0;
+    if (typeof attachments.values === 'function') return !attachments.values().next().done;
+    return false;
+  }
+
+  function formatSteerFailure(reason) {
+    const text = String(reason || '').trim();
+    return text || 'steer unavailable';
+  }
+
+  async function trySteerRunningPrompt({ state, message, key, content, session }) {
+    if (!state.running) return null;
+    const busyPrompt = resolveBusyPromptModeSetting(session);
+    if (busyPrompt?.mode !== 'steer_if_possible' || !busyPrompt?.canSteer) return null;
+    if (typeof steerPrompt !== 'function') return null;
+
+    if (hasMessageAttachments(message)) {
+      return {
+        ok: false,
+        steered: false,
+        fallbackReason: '带附件的消息暂不支持运行中插入',
+      };
+    }
+
+    try {
+      const outcome = await steerPrompt({
+        message,
+        key,
+        content,
+        session,
+        channelState: state,
+      });
+      if (outcome?.steered) {
+        await safeReply(message, '↪️ 已插入当前 Codex 任务。');
+        return { ok: true, steered: true };
+      }
+      return {
+        ok: false,
+        steered: false,
+        fallbackReason: outcome?.error || outcome?.reason || 'steer failed',
+      };
+    } catch (err) {
+      return {
+        ok: false,
+        steered: false,
+        fallbackReason: safeError(err),
+      };
+    }
+  }
+
   async function enqueuePrompt(message, key, content, securityContext = null) {
     const state = getChannelState(key);
-    const security = securityContext || resolveSecurityContext(message.channel, getSession(key, { channel: message.channel || null }));
+    const session = getSession(key, { channel: message.channel || null });
+    const security = securityContext || resolveSecurityContext(message.channel, session);
+    const steerAttempt = await trySteerRunningPrompt({
+      state,
+      message,
+      key,
+      content,
+      session,
+    });
+    if (steerAttempt?.steered) {
+      return { ok: true, enqueued: false, steered: true };
+    }
+
     const maxQueue = security.maxQueuePerChannel;
     if (maxQueue > 0 && state.queue.length >= maxQueue) {
       await safeReply(
@@ -45,9 +114,12 @@ export function createChannelQueue({
     });
 
     if (queuedAhead > 0) {
+      const steerFailure = steerAttempt && !steerAttempt.steered
+        ? `插入当前任务失败（${formatSteerFailure(steerAttempt.fallbackReason)}），`
+        : '';
       await safeReply(
         message,
-        `⏳ 已加入队列，前面还有 ${queuedAhead} 条。可用 \`${slashRef('status')}\` 查看状态，必要时用 \`!c\` 中断当前任务。`,
+        `⏳ ${steerFailure}已加入队列，前面还有 ${queuedAhead} 条。可用 \`${slashRef('status')}\` 查看状态，必要时用 \`!c\` 中断当前任务。`,
       );
     }
 

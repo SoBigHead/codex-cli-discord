@@ -48,6 +48,12 @@ export function createPromptRuntime({
     startSessionProgressBridge,
   });
   const runProviderTask = runnerExecutor.runProviderTask || runnerExecutor.runCodex;
+  const steerProviderTask = runnerExecutor.steerProviderTask || (async () => ({
+    ok: false,
+    steered: false,
+    reason: 'unsupported_runtime',
+    error: 'steer unavailable',
+  }));
   const createProgressReporter = createPromptProgressReporterFactoryFn({
     ...promptOrchestratorOptions,
     presentation,
@@ -63,6 +69,7 @@ export function createPromptRuntime({
     ...channelQueueOptions,
     getChannelState,
     handlePrompt,
+    steerPrompt: (options) => steerProviderTask(options),
     rememberFailedPrompt,
     clearLastFailedPrompt,
     getLastFailedPrompt,
@@ -80,6 +87,7 @@ export function createPromptRuntime({
     getAllRuntimeSnapshots,
     handlePrompt,
     runProviderTask,
+    steerProviderTask,
     runCodex: runnerExecutor.runCodex || runProviderTask,
     closeRuntimeSession: runnerExecutor.closeRuntimeSession || (() => false),
     closeAllRuntimeSessions: runnerExecutor.closeAllRuntimeSessions || (() => 0),

@@ -106,6 +106,75 @@ test('createChannelQueue processes queued prompts sequentially', async () => {
   assert.deepEqual(secondMessage.removals, ['bot-user']);
 });
 
+test('createChannelQueue steers running Codex long prompts instead of queueing', async () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = runtime.getChannelState('thread-1');
+  state.running = true;
+  const replyLog = [];
+  const reactionLog = [];
+  const steered = [];
+  const queue = createChannelQueue({
+    getChannelState: runtime.getChannelState,
+    getSession: () => ({ provider: 'codex', runtimeMode: 'long', busyPromptMode: 'steer_if_possible' }),
+    resolveBusyPromptModeSetting: () => ({ mode: 'steer_if_possible', requestedMode: 'steer_if_possible', canSteer: true }),
+    resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
+    safeReply: async (message, payload) => {
+      replyLog.push({ id: message.id, payload });
+    },
+    safeError: (error) => error.message,
+    steerPrompt: async ({ content, key }) => {
+      steered.push({ content, key });
+      return { ok: true, steered: true, threadId: 'thread-id', turnId: 'turn-id' };
+    },
+    handlePrompt: async () => {
+      throw new Error('should not run queued prompt');
+    },
+  });
+
+  const message = createMessage('steer', replyLog, reactionLog);
+  const result = await queue.enqueuePrompt(message, 'thread-1', 'adjust current work');
+
+  assert.deepEqual(result, { ok: true, enqueued: false, steered: true });
+  assert.deepEqual(steered, [{ content: 'adjust current work', key: 'thread-1' }]);
+  assert.equal(state.queue.length, 0);
+  assert.equal(replyLog[0].payload, '↪️ 已插入当前 Codex 任务。');
+});
+
+test('createChannelQueue falls back to queue when steer fails', async () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = runtime.getChannelState('thread-1');
+  state.running = true;
+  const replyLog = [];
+  const reactionLog = [];
+  const queue = createChannelQueue({
+    getChannelState: runtime.getChannelState,
+    getSession: () => ({ provider: 'codex', runtimeMode: 'long', busyPromptMode: 'steer_if_possible' }),
+    resolveBusyPromptModeSetting: () => ({ mode: 'steer_if_possible', requestedMode: 'steer_if_possible', canSteer: true }),
+    resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
+    safeReply: async (message, payload) => {
+      replyLog.push({ id: message.id, payload });
+    },
+    safeError: (error) => error.message,
+    steerPrompt: async () => ({ ok: false, steered: false, error: 'cannot steer a review turn' }),
+    handlePrompt: async () => ({ ok: true, cancelled: false }),
+  });
+
+  const message = createMessage('fallback', replyLog, reactionLog);
+  const result = await queue.enqueuePrompt(message, 'thread-1', 'adjust current work');
+
+  assert.equal(result.enqueued, true);
+  assert.equal(result.queuedAhead, 1);
+  assert.equal(state.queue.length, 1);
+  assert.match(replyLog[0].payload, /插入当前任务失败（cannot steer a review turn）/);
+  assert.match(replyLog[0].payload, /已加入队列/);
+});
+
 test('createChannelQueue falls back to message client user id when getCurrentUserId is omitted', async () => {
   const runtime = createChannelRuntimeStore({
     cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),

@@ -507,8 +507,34 @@ export function createRunnerExecutor({
     };
   }
 
+  async function steerProviderTask({
+    session,
+    sessionKey = null,
+    prompt,
+    inputImages = [],
+  } = {}) {
+    const provider = getSessionProvider(session);
+    if (normalizeProvider(provider) !== 'codex' || resolveRuntimeModeSetting(session).mode !== 'long') {
+      return {
+        ok: false,
+        steered: false,
+        reason: 'unsupported_runtime',
+        error: 'steer requires Codex long runtime',
+        threadId: null,
+        turnId: null,
+      };
+    }
+    return codexAppServerRunner.steerTask({
+      session,
+      sessionKey,
+      prompt,
+      inputImages,
+    });
+  }
+
   return {
     runProviderTask,
+    steerProviderTask,
     runCodex: runProviderTask,
     buildSessionRunnerArgs,
     closeRuntimeSession: (sessionKey, reason = 'closed') => {

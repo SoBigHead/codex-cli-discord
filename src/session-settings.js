@@ -532,7 +532,7 @@ export function createSessionSettings({
     if (!requestedMode) requestedMode = 'queue';
 
     const runtimeAllowsSteer = runtime.supported && runtime.mode === 'long';
-    const providerCanSteer = false;
+    const providerCanSteer = provider === 'codex';
     const canSteer = runtimeAllowsSteer && providerCanSteer;
     const mode = requestedMode === 'steer_if_possible' && !canSteer ? 'queue' : requestedMode;
     let reason = null;

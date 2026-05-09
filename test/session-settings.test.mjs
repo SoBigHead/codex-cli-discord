@@ -425,6 +425,14 @@ test('session-settings resolves busy prompt mode with fail-closed steering const
     source: 'session override',
     reason: null,
   });
+  assert.deepEqual(settings.resolveBusyPromptModeSetting({ provider: 'codex', runtimeMode: 'long', busyPromptMode: 'steer' }), {
+    mode: 'steer_if_possible',
+    requestedMode: 'steer_if_possible',
+    canSteer: true,
+    supported: true,
+    source: 'session override',
+    reason: null,
+  });
   assert.equal(settings.resolveBusyPromptModeSetting({ provider: 'claude', runtimeMode: null }).source, 'parent channel');
 });
 

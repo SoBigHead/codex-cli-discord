@@ -763,6 +763,103 @@ export function createCodexAppServerRunner({
     });
   }
 
+  async function steerTask({
+    sessionKey,
+    prompt,
+    inputImages = [],
+  }) {
+    const key = normalizeText(sessionKey);
+    if (!key) {
+      return {
+        ok: false,
+        steered: false,
+        reason: 'missing_session_key',
+        error: 'missing Codex app-server long session key',
+        threadId: null,
+        turnId: null,
+      };
+    }
+
+    const entry = entries.get(key);
+    if (!entry || entry.closed || !entry.currentTurn) {
+      return {
+        ok: false,
+        steered: false,
+        reason: 'no_active_turn',
+        error: 'no active Codex app-server turn to steer',
+        threadId: entry?.threadId || null,
+        turnId: null,
+      };
+    }
+
+    const turn = entry.currentTurn;
+    const threadId = normalizeText(turn.threadId || entry.threadId);
+    const turnId = normalizeText(entry.activeTurnId || turn.turnId);
+    if (!threadId || !turnId) {
+      return {
+        ok: false,
+        steered: false,
+        reason: 'active_turn_unavailable',
+        error: 'Codex app-server active turn id is unavailable',
+        threadId,
+        turnId,
+      };
+    }
+
+    const input = buildUserInput(prompt, inputImages);
+    if (!input.length) {
+      return {
+        ok: false,
+        steered: false,
+        reason: 'empty_input',
+        error: 'Codex app-server steer input is empty',
+        threadId,
+        turnId,
+      };
+    }
+
+    try {
+      const result = await send(entry, 'turn/steer', {
+        threadId,
+        input,
+        expectedTurnId: turnId,
+      });
+      const acceptedTurnId = normalizeText(result?.turnId) || turnId;
+      entry.activeTurnId = acceptedTurnId;
+      turn.turnId = acceptedTurnId;
+      turn.meta.steerCount = Number(turn.meta.steerCount || 0) + 1;
+      turn.onEvent?.({
+        type: 'turn.steer',
+        thread_id: threadId,
+        turn_id: acceptedTurnId,
+      });
+      logCodexLongEvent(log, 'turn-steer', {
+        key,
+        pid: entry.child?.pid ?? null,
+        threadId,
+        turnId: acceptedTurnId,
+      });
+      return {
+        ok: true,
+        steered: true,
+        threadId,
+        turnId: acceptedTurnId,
+      };
+    } catch (err) {
+      const error = safeError(err);
+      turn.logs.push(error);
+      turn.onLog?.(error, 'stderr');
+      return {
+        ok: false,
+        steered: false,
+        reason: 'steer_failed',
+        error,
+        threadId,
+        turnId,
+      };
+    }
+  }
+
   function closeSession(sessionKey, reason = 'closed') {
     const key = normalizeText(sessionKey);
     const entry = entries.get(key);
@@ -790,6 +887,7 @@ export function createCodexAppServerRunner({
 
   return {
     runTask,
+    steerTask,
     closeSession,
     closeAll,
     getSnapshot,
