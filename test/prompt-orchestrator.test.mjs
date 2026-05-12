@@ -594,6 +594,60 @@ test('createPromptOrchestrator.handlePrompt uses the latest reply delivery setti
   assert.deepEqual(streamLog, ['live event']);
 });
 
+test('createPromptOrchestrator.handlePrompt removes streamed process paragraphs from the final reply', async () => {
+  let channelStateRef = null;
+  const harness = createOrchestrator({
+    resolveReplyDeliverySetting: () => ({ mode: 'stream_mention', source: 'session override' }),
+    runTask: async (options) => {
+      options.onSpawn?.({ pid: 123 });
+      channelStateRef.activeRun.streamedProcessActivityKeys = [
+        '收到。先停掉当前单队列后台进程，避免它和新的 3 并发抢同一批任务。',
+        '管理器现在确实还写死了单并发。这里不是开 3 个独立脚本硬冲。',
+      ];
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: ['done'],
+        finalAnswerMessages: [
+          [
+            '收到。先停掉当前单队列后台进程，避免它和新的 3 并发抢同一批任务。',
+            '',
+            '管理器现在确实还写死了单并发。这里不是开 3 个独立脚本硬冲。',
+            '',
+            '3 并发已经改好并做了 dry-run，10 个目标都能分配到不同报告目录。',
+          ].join('\n'),
+        ],
+        threadId: 'sess-1',
+        usage: { input_tokens: 321 },
+      };
+    },
+  });
+  const { replyLog, orchestrator } = harness;
+  const message = {
+    id: 'msg-strip-streamed-process',
+    channel: {
+      async sendTyping() {},
+      async send(payload) {
+        replyLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+  channelStateRef = channelState;
+
+  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.doesNotMatch(replyLog[0], /先停掉当前单队列后台进程/);
+  assert.doesNotMatch(replyLog[0], /管理器现在确实还写死了单并发/);
+  assert.match(replyLog[0], /3 并发已经改好/);
+});
+
 test('createPromptOrchestrator.handlePrompt adds retry button after final failure', async () => {
   let runCount = 0;
   const delays = [];

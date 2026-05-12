@@ -293,6 +293,35 @@ export function createPromptOrchestrator({
     return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
   }
 
+  function stripStreamedProcessMessagesFromFinalBody(body, channelState) {
+    const streamed = Array.isArray(channelState?.activeRun?.streamedProcessActivityKeys)
+      ? channelState.activeRun.streamedProcessActivityKeys
+      : [];
+    if (!streamed.length) return body;
+
+    const streamedKeys = new Set(streamed.map(normalizeProcessActivityKey).filter(Boolean));
+    if (!streamedKeys.size) return body;
+
+    const parts = String(body || '').split(/(\n{2,})/);
+    const filtered = [];
+    for (let index = 0; index < parts.length; index += 1) {
+      const part = parts[index];
+      if (streamedKeys.has(normalizeProcessActivityKey(part))) {
+        if (filtered.length && /^\n{2,}$/.test(filtered[filtered.length - 1])) {
+          filtered.pop();
+        }
+        if (/^\n{2,}$/.test(parts[index + 1] || '')) {
+          index += 1;
+        }
+        continue;
+      }
+      filtered.push(part);
+    }
+
+    const stripped = filtered.join('').trim();
+    return stripped || body;
+  }
+
   async function sendStreamProcessMessageIfEnabled(message, session, channelState, text) {
     if (!shouldStreamProcessMessages(getCurrentReplyDeliveryMode(session))) return;
     const key = normalizeProcessActivityKey(text);
@@ -853,7 +882,10 @@ export function createPromptOrchestrator({
         return { ok: false, cancelled: false };
       }
 
-      const body = composeResultText(result, session);
+      const body = stripStreamedProcessMessagesFromFinalBody(
+        composeResultText(result, session),
+        channelState,
+      );
       const parts = splitForDiscord(body, resultChunkChars);
 
       if (parts.length === 0) {
