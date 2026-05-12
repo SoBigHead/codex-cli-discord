@@ -19,6 +19,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
     resolveModelSetting: () => ({ value: 'gpt-5.4', source: 'config.toml' }),
     resolveReasoningEffortSetting: () => ({ value: 'high', source: 'config.toml' }),
     resolveFastModeSetting: () => ({ enabled: false, supported: true, source: 'config.toml' }),
+    resolveReplyDeliverySetting: () => ({ mode: 'stream_mention', source: 'env default' }),
     resolveTimeoutSetting: () => ({ timeoutMs: 60000 }),
     resolveTaskRetrySetting: () => ({ maxAttempts: 3, baseDelayMs: 1000, maxDelayMs: 8000 }),
     resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
@@ -237,6 +238,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.resolveTaskRetrySetting, sessionSettings.resolveTaskRetrySetting);
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.resolveModelSetting, sessionSettings.resolveModelSetting);
   assert.equal(calls.promptRuntime.promptOrchestratorOptions.resolveReasoningEffortSetting, sessionSettings.resolveReasoningEffortSetting);
+  assert.equal(calls.promptRuntime.promptOrchestratorOptions.resolveReplyDeliverySetting, sessionSettings.resolveReplyDeliverySetting);
   assert.equal(calls.promptRuntime.channelQueueOptions.resolveSecurityContext, securityPolicy.resolveSecurityContext);
   assert.equal(calls.promptRuntime.channelQueueOptions.resolveBusyPromptModeSetting, sessionSettings.resolveBusyPromptModeSetting);
   assert.equal(calls.promptRuntime.channelQueueOptions.getCurrentUserId, undefined);
@@ -253,6 +255,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(calls.commandSurface.reportOptions.getRuntimeSnapshot, promptRuntime.getRuntimeSnapshot);
   assert.equal(calls.commandSurface.reportOptions.getSessionId, identity.getSessionId);
   assert.equal(calls.commandSurface.settingsPanelOptions.resolveCompactThresholdSetting, sessionSettings.resolveCompactThresholdSetting);
+  assert.equal(calls.commandSurface.settingsPanelOptions.resolveReplyDeliverySetting, sessionSettings.resolveReplyDeliverySetting);
   assert.equal(calls.commandSurface.workspaceBrowserOptions.commandActions, commandActions);
   assert.equal(typeof calls.commandSurface.workspaceBrowserOptions.resolveChildThreadWorkspaceMode, 'function');
   assert.equal(typeof calls.commandSurface.workspaceBrowserOptions.setChildThreadWorkspaceMode, 'function');

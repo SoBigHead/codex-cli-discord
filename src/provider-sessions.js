@@ -254,6 +254,91 @@ export function readClaudeSessionMetaBySessionId(sessionId, workspaceDir = '', n
   };
 }
 
+export function buildClaudeSessionRescueSummary({
+  sessionId,
+  workspaceDir = '',
+  maxTaskItems = 24,
+  maxAssistantItems = 8,
+} = {}) {
+  const match = findLatestClaudeSessionFileBySessionId(sessionId, workspaceDir);
+  if (!match?.file) {
+    return { ok: false, error: 'claude session file not found', summary: '' };
+  }
+
+  const rows = readJsonLines(match.file);
+  if (!rows.length) {
+    return { ok: false, error: 'claude session file is empty', summary: '' };
+  }
+
+  const taskResults = [];
+  const assistantNotes = [];
+  const errors = [];
+  let lastPrompt = '';
+
+  for (const row of rows) {
+    if (row?.type === 'last-prompt') {
+      const prompt = normalizeOneLine(row.lastPrompt || '');
+      if (prompt) lastPrompt = prompt;
+      continue;
+    }
+
+    if (row?.type === 'user') {
+      const text = extractClaudeRowText(row);
+      const prompt = normalizeOneLine(text);
+      if (prompt && !prompt.includes('<task-notification>') && !prompt.includes('请压缩总结当前会话上下文')) {
+        lastPrompt = prompt;
+      }
+      const task = extractTaskNotification(text);
+      if (task) taskResults.push(task);
+      continue;
+    }
+
+    if (row?.type !== 'assistant') continue;
+    const text = extractClaudeRowText(row);
+    const normalized = normalizeOneLine(text);
+    if (!normalized) continue;
+    if (row.isApiErrorMessage || normalized.includes('context window limit') || normalized.includes('API Error')) {
+      errors.push(normalized);
+      continue;
+    }
+    assistantNotes.push(normalized);
+  }
+
+  const recentTasks = taskResults.slice(-Math.max(1, maxTaskItems));
+  const recentAssistantNotes = assistantNotes.slice(-Math.max(1, maxAssistantItems));
+  if (!recentTasks.length && !recentAssistantNotes.length && !lastPrompt) {
+    return { ok: false, error: 'no compactable Claude session content found', summary: '' };
+  }
+
+  const completedTasks = taskResults.filter((item) => item.status === 'completed').length;
+  const failedTasks = taskResults.filter((item) => item.status && item.status !== 'completed').length;
+  const lines = [
+    `目标：延续 Claude project session ${sessionId} 的工作。该 session 已超过上下文窗，以下摘要从本地 session 文件救援提取，不是模型原生压缩。`,
+    lastPrompt ? `最近用户意图：${truncateText(lastPrompt, 260)}` : '',
+    `进展概览：本地记录中识别到 ${taskResults.length} 个任务通知，其中完成 ${completedTasks} 个${failedTasks ? `，非完成 ${failedTasks} 个` : ''}。`,
+    recentTasks.length ? '最近任务结果：' : '',
+    ...recentTasks.map((item) => {
+      const parts = [
+        item.summary || item.id || '未命名任务',
+        item.status ? `状态 ${item.status}` : '',
+        item.outputFile ? `输出 ${item.outputFile}` : '',
+        item.result ? truncateText(item.result, 220) : '',
+      ].filter(Boolean);
+      return `- ${parts.join('；')}`;
+    }),
+    recentAssistantNotes.length ? '最近可见回复：' : '',
+    ...recentAssistantNotes.map((note) => `- ${truncateText(note, 220)}`),
+    errors.length ? `风险与约束：最近出现 ${errors.length} 次 API/context 错误，最新错误是 ${truncateText(errors[errors.length - 1], 180)}。后续必须使用新 session 继续，不能再 resume 旧 session。` : '风险与约束：旧 session 已接近或超过上下文窗，后续必须使用新 session 继续。',
+    '下一步建议：从最近用户意图继续；如果是在批量报告任务中，先盘点已生成目录和失败项，再用小批次继续，避免把完整历史和大量 task-notification 重新塞回上下文。',
+  ].filter(Boolean);
+
+  return {
+    ok: true,
+    summary: truncateText(lines.join('\n'), 6000),
+    sourceFile: match.file,
+  };
+}
+
 function findLatestGeminiSessionFileBySessionId(sessionId, workspaceDir = '', notOlderThanMs = 0) {
   const targetId = String(sessionId || '').trim().toLowerCase();
   if (!targetId) return null;
@@ -377,6 +462,85 @@ function readGeminiProjectsMap() {
     out.set(path.resolve(normalizedWorkspace), normalizedSlug);
   }
   return out;
+}
+
+function readJsonLines(filePath) {
+  try {
+    return fs.readFileSync(filePath, 'utf8')
+      .split('\n')
+      .map((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) return null;
+        try {
+          return JSON.parse(trimmed);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function extractClaudeRowText(row) {
+  const parts = [];
+  collectTextParts(row?.message, parts);
+  collectTextParts(row?.content, parts);
+  return parts.join('\n\n').trim();
+}
+
+function collectTextParts(value, out) {
+  if (value === null || value === undefined) return;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (text) out.push(text);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectTextParts(item, out);
+    return;
+  }
+  if (typeof value !== 'object') return;
+  const type = String(value.type || '').trim().toLowerCase();
+  if (type === 'thinking' || type === 'tool_use') return;
+  collectTextParts(value.text, out);
+  collectTextParts(value.result, out);
+  collectTextParts(value.content, out);
+}
+
+function extractTaskNotification(text) {
+  const raw = String(text || '');
+  if (!raw.includes('<task-notification>')) return null;
+  return {
+    id: extractTag(raw, 'task-id'),
+    status: extractTag(raw, 'status'),
+    summary: extractTag(raw, 'summary'),
+    outputFile: extractTag(raw, 'output-file'),
+    result: normalizeOneLine(stripMarkdown(extractTag(raw, 'result'))),
+  };
+}
+
+function extractTag(text, tag) {
+  const pattern = new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i');
+  return String(text.match(pattern)?.[1] || '').trim();
+}
+
+function normalizeOneLine(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function stripMarkdown(value) {
+  return String(value || '')
+    .replace(/[*_`#>]/g, '')
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1');
+}
+
+function truncateText(value, maxChars) {
+  const text = String(value || '').trim();
+  const max = Math.max(20, Number(maxChars) || 200);
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
 }
 
 function getGeminiSearchRoots(workspaceDir = '') {

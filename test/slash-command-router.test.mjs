@@ -105,6 +105,7 @@ function createRouterState(overrides = {}) {
   const browseCalls = [];
   const settingsCalls = [];
   const modelSettingsCalls = [];
+  const compactCalls = [];
   let fastModeSetting = { enabled: false, supported: true, source: 'config.toml' };
   let runtimeModeSetting = { mode: 'normal', supported: true, source: 'env default' };
   let retryOutcome = { ok: true, enqueued: true, queuedAhead: 0 };
@@ -253,6 +254,10 @@ function createRouterState(overrides = {}) {
       retryCalls.push({ key, userId });
       return retryOutcome;
     },
+    compactSession: async (message, key) => {
+      compactCalls.push({ key, channelId: message.channel?.id || null });
+      return { ok: true };
+    },
     openWorkspaceBrowser: ({ key, mode, userId }) => {
       const payload = { content: `browse:${mode}:${key}:${userId}`, components: [] };
       browseCalls.push(payload);
@@ -289,6 +294,7 @@ function createRouterState(overrides = {}) {
     getFastModeSetting: () => fastModeSetting,
     getRuntimeModeSetting: () => runtimeModeSetting,
     getCloseRuntimeCalls: () => [...closeRuntimeCalls],
+    getCompactCalls: () => [...compactCalls],
   };
 }
 
@@ -934,6 +940,28 @@ test('createSlashCommandRouter rejects only unsupported compact actions for non-
     content: '⚠️ 当前 provider Gemini CLI 不支持 `native` 压缩。',
     flags: 64,
   }]);
+});
+
+test('createSlashCommandRouter runs manual compact from slash compact', async () => {
+  const state = createRouterState({
+    parseCompactConfigAction: () => ({ type: 'run' }),
+  });
+  const interaction = createInteraction('cx_compact');
+
+  const handled = await state.router({
+    interaction,
+    commandName: 'compact',
+    respond: async (payload) => {
+      state.replies.push(payload);
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(state.replies, [{
+    content: '已开始手动压缩。',
+    flags: 64,
+  }]);
+  assert.deepEqual(state.getCompactCalls(), [{ key: 'channel-1', channelId: 'channel-1' }]);
 });
 
 test('createSlashCommandRouter updates extra info config', async () => {

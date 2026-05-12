@@ -89,6 +89,6 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
         return this;
       },
     }).options[0].choices.map((choice) => choice.value),
-    ['status', 'strategy', 'token_limit', 'enabled', 'reset'],
+    ['status', 'run', 'strategy', 'token_limit', 'enabled', 'reset'],
   );
 });

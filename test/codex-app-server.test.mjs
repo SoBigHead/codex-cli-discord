@@ -101,6 +101,53 @@ test('forkCodexThread rejects missing parent thread id before spawning', async (
   assert.equal(spawned, false);
 });
 
+test('forkCodexThread uses a longer default timeout for native fork', async () => {
+  const fake = createFakeSpawn({
+    onRequest(request) {
+      if (request.method === 'initialize') {
+        return { id: request.id, result: { codexHome: '/tmp/codex' } };
+      }
+      if (request.method === 'thread/fork') {
+        return {
+          id: request.id,
+          result: {
+            thread: {
+              id: 'fork-1',
+              forkedFromId: 'parent-1',
+            },
+          },
+        };
+      }
+      throw new Error(`unexpected method ${request.method}`);
+    },
+  });
+
+  const realSetTimeout = globalThis.setTimeout;
+  const handles = [];
+  const delays = [];
+  globalThis.setTimeout = (fn, delay, ...args) => {
+    delays.push(delay);
+    const handle = realSetTimeout(() => {}, 60_000);
+    handles.push(handle);
+    return handle;
+  };
+
+  try {
+    const result = await forkCodexThread({
+      codexBin: 'codex-test',
+      spawnFn: fake.spawnFn,
+      env: { HOME: '/tmp/home' },
+      threadId: 'parent-1',
+    });
+    assert.equal(result.threadId, 'fork-1');
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    for (const handle of handles) clearTimeout(handle);
+  }
+
+  assert.deepEqual(delays, [30_000]);
+});
+
 test('Codex goal helpers enable goals and send thread goal requests', async () => {
   const fake = createFakeSpawn({
     onRequest(request) {

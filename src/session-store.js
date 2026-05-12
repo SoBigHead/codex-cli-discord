@@ -213,6 +213,8 @@ export function createSessionStore({
         forkedFromChannelId: null,
         forkedAt: null,
         pendingForkFromSessionId: null,
+        pendingCompactSummary: null,
+        pendingCompactSourceSessionId: null,
         configOverrides: [],
         updatedAt: new Date().toISOString(),
       };

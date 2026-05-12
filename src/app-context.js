@@ -147,6 +147,7 @@ export function createAppContext({
       resolveFastModeSetting: sessionSettings.resolveFastModeSetting,
       resolveRuntimeModeSetting: sessionSettings.resolveRuntimeModeSetting,
       resolveBusyPromptModeSetting: sessionSettings.resolveBusyPromptModeSetting,
+      resolveReplyDeliverySetting: sessionSettings.resolveReplyDeliverySetting,
       resolveTimeoutSetting: sessionSettings.resolveTimeoutSetting,
       resolveTaskRetrySetting: sessionSettings.resolveTaskRetrySetting,
       resolveCompactStrategySetting: sessionSettings.resolveCompactStrategySetting,
@@ -210,6 +211,8 @@ export function createAppContext({
       resolveExtraInfoSetting: sessionSettings.resolveExtraInfoSetting,
       getDefaultCodexProfile: commandActionsOptions.resolveDefaultCodexProfile,
       getReplyDeliveryDefault: commandActionsOptions.resolveReplyDeliveryDefault,
+      getChannelState: promptRuntime.getChannelState,
+      safeChannelSend: promptOrchestratorOptions.safeChannelSend,
       closeRuntimeSession: promptRuntime.closeRuntimeSession,
     },
     reportOptions: {
@@ -285,6 +288,7 @@ export function createAppContext({
       cancelChannelWork: promptRuntime.cancelChannelWork,
       closeRuntimeSession: promptRuntime.closeRuntimeSession,
       retryLastPrompt: promptRuntime.retryLastPrompt,
+      compactSession: promptRuntime.compactSession,
     },
     textCommandOptions: {
       ...textCommandOptions,
@@ -312,6 +316,7 @@ export function createAppContext({
       getRuntimeSnapshot: promptRuntime.getRuntimeSnapshot,
       cancelChannelWork: promptRuntime.cancelChannelWork,
       closeRuntimeSession: promptRuntime.closeRuntimeSession,
+      compactSession: promptRuntime.compactSession,
     },
   });
   if (typeof commandSurface.buildWorkspaceBusyPayload === 'function') {

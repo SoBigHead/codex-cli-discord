@@ -181,7 +181,7 @@ test('createPromptProgressReporterFactory seeds initial step and updates final p
   assert.equal(harness.cleared.length, 2);
 });
 
-test('createPromptProgressReporterFactory dedupes repeated events and drains buffered activity on finish', async () => {
+test('createPromptProgressReporterFactory dedupes repeated events and keeps activity on the final card', async () => {
   const harness = createHarness();
 
   await harness.reporter.start();
@@ -212,7 +212,7 @@ test('createPromptProgressReporterFactory dedupes repeated events and drains buf
 
   assert.equal(harness.channelState.activeRun.progressEvents, 2);
   assert.deepEqual(harness.channelState.activeRun.completedSteps, ['Inspect code', 'Patch orchestrator']);
-  assert.deepEqual(harness.channelState.activeRun.recentActivities, ['rg src']);
+  assert.deepEqual(harness.channelState.activeRun.recentActivities, ['rg src', 'rg test']);
 
   await harness.reporter.finish({ ok: true });
 
@@ -242,6 +242,39 @@ test('createPromptProgressReporterFactory can stream deduped process messages wh
 
   assert.deepEqual(harness.streamed, ['我先检查一下这个仓库的入口文件。']);
   assert.match(harness.edits.at(-1).content, /process: 我先检查一下这个仓库的入口文件。/);
+});
+
+test('createPromptProgressReporterFactory streams during the run without dumping backlog on finish', async () => {
+  const harness = createHarness();
+
+  await harness.reporter.start();
+  harness.channelState.activeRun.phase = 'exec';
+
+  harness.reporter.onEvent({
+    summaryStep: 'Step 1',
+    rawActivity: '过程消息 1',
+  });
+  harness.reporter.onEvent({
+    summaryStep: 'Step 2',
+    rawActivity: '过程消息 2',
+  });
+  harness.reporter.onEvent({
+    summaryStep: 'Step 3',
+    rawActivity: '过程消息 3',
+  });
+
+  assert.deepEqual(harness.streamed, ['过程消息 1']);
+  assert.deepEqual(harness.channelState.activeRun.recentActivities, ['过程消息 1', '过程消息 2', '过程消息 3']);
+
+  harness.advance(1200);
+  harness.intervals.find((handle) => handle.ms === 1000)?.fn();
+
+  assert.deepEqual(harness.streamed, ['过程消息 1', '过程消息 2']);
+
+  await harness.reporter.finish({ ok: true });
+
+  assert.deepEqual(harness.streamed, ['过程消息 1', '过程消息 2']);
+  assert.match(harness.edits.at(-1).content, /process: 过程消息 3/);
 });
 
 test('createPromptProgressReporterFactory ignores stderr when disabled and keeps stdout progress', async () => {

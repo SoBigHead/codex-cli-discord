@@ -207,6 +207,7 @@ test('buildSlashCommands narrows locked-provider surfaces to native aliases and 
   assert.equal(resume.description, '继承一个已有的 chat session');
   assert.deepEqual(compact.options[0].choices.map((choice) => choice.value), [
     'status',
+    'run',
     'strategy',
     'token_limit',
     'enabled',

@@ -515,6 +515,85 @@ test('createPromptOrchestrator.handlePrompt can mention the requester on termina
   assert.match(replyLog[0], /^<@user-mention>\s+/);
 });
 
+test('createPromptOrchestrator.handlePrompt uses the latest reply delivery setting for terminal replies', async () => {
+  let replyMode = 'card_only';
+  const harness = createOrchestrator({
+    resolveReplyDeliverySetting: () => ({ mode: replyMode, source: 'env default' }),
+    runTask: async (options) => {
+      options.onSpawn?.({ pid: 123 });
+      replyMode = 'stream_mention';
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: ['done'],
+        finalAnswerMessages: ['final answer'],
+        threadId: 'sess-1',
+        usage: { input_tokens: 321 },
+      };
+    },
+  });
+  const { replyLog, orchestrator } = harness;
+  const message = {
+    id: 'msg-dynamic-mention',
+    author: { id: 'user-dynamic' },
+    channel: {
+      async sendTyping() {},
+      async send(payload) {
+        replyLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.match(replyLog[0], /^<@user-dynamic>\s+/);
+});
+
+test('createPromptOrchestrator.handlePrompt uses the latest reply delivery setting for process messages', async () => {
+  let replyMode = 'card_only';
+  const streamLog = [];
+  const harness = createOrchestrator({
+    resolveReplyDeliverySetting: () => ({ mode: replyMode, source: 'env default' }),
+    safeChannelSend: async (_message, payload) => {
+      streamLog.push(payload);
+    },
+    createProgressReporter: ({ onStreamProcessMessage }) => ({
+      async start() {
+        replyMode = 'stream_only';
+        await onStreamProcessMessage('live event');
+      },
+      sync() {},
+      setLatestStep() {},
+      onEvent() {},
+      onLog() {},
+      async finish() {},
+    }),
+  });
+  const { orchestrator } = harness;
+  const message = {
+    id: 'msg-dynamic-stream',
+    channel: {
+      async sendTyping() {},
+      async send(payload) {
+        streamLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'do work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.deepEqual(streamLog, ['live event']);
+});
+
 test('createPromptOrchestrator.handlePrompt adds retry button after final failure', async () => {
   let runCount = 0;
   const delays = [];
@@ -822,7 +901,7 @@ test('createPromptOrchestrator.handlePrompt keeps a failed session when there wa
   assert.match(replyLog[0].content, /• rollout session: `sess-failed`/);
 });
 
-test('createPromptOrchestrator.handlePrompt does not auto-compact into a new session', async () => {
+test('createPromptOrchestrator.handlePrompt hard-compacts into a fresh session before the next run', async () => {
   const prompts = [];
   const harness = createOrchestrator({
     runTask: async (options) => {
@@ -862,11 +941,157 @@ test('createPromptOrchestrator.handlePrompt does not auto-compact into a new ses
   const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'keep same session', channelState);
 
   assert.deepEqual(outcome, { ok: true, cancelled: false });
-  assert.deepEqual(prompts, ['keep same session']);
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0], /请压缩总结当前会话上下文/);
+  assert.match(prompts[1], /【压缩摘要开始】\nfinal answer\n【压缩摘要结束】/);
+  assert.match(prompts[1], /keep same session/);
   assert.equal(session.runnerSessionId, 'sess-1');
   assert.equal(session.codexThreadId, 'sess-1');
-  assert.doesNotMatch(replyLog[0], /已超过自动压缩阈值/);
-  assert.doesNotMatch(replyLog[0], /自动压缩并切换新会话/);
+  assert.match(replyLog[0], /已自动压缩上一段rollout session：sess-1/);
+});
+
+test('createPromptOrchestrator.compactCurrentSession stores summary and clears the bound session after manual compact', async () => {
+  const prompts = [];
+  const harness = createOrchestrator({
+    runTask: async (options) => {
+      prompts.push(options.prompt);
+      options.onSpawn?.({ pid: 793 });
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: ['manual summary'],
+        finalAnswerMessages: ['manual summary'],
+        threadId: 'sess-1',
+        usage: { input_tokens: 333 },
+      };
+    },
+  });
+  const { session, replyLog, orchestrator } = harness;
+  const message = {
+    id: 'msg-5b',
+    channel: {
+      async sendTyping() {},
+      async send(payload) {
+        replyLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.compactCurrentSession(message, 'thread-1', channelState);
+
+  assert.equal(outcome.ok, true);
+  assert.equal(session.runnerSessionId, null);
+  assert.equal(session.codexThreadId, null);
+  assert.equal(session.lastInputTokens, null);
+  assert.equal(session.pendingCompactSummary, 'manual summary');
+  assert.equal(session.pendingCompactSourceSessionId, 'sess-1');
+  assert.match(prompts[0], /请压缩总结当前会话上下文/);
+  assert.match(replyLog[0], /已压缩 rollout session：sess-1/);
+});
+
+test('createPromptOrchestrator.compactCurrentSession rescues Claude sessions that are already over context', async () => {
+  const harness = createOrchestrator({
+    runTask: async () => ({
+      ok: false,
+      cancelled: false,
+      timedOut: false,
+      error: 'API Error: The model has reached its context window limit.',
+      logs: [],
+      notes: [],
+      reasonings: [],
+      messages: [],
+      finalAnswerMessages: [],
+      threadId: 'claude-old',
+      usage: { input_tokens: 0 },
+    }),
+    buildClaudeSessionRescueSummary: ({ sessionId, workspaceDir }) => ({
+      ok: true,
+      summary: `rescued ${sessionId} from ${workspaceDir}`,
+      sourceFile: '/tmp/session.jsonl',
+    }),
+  });
+  harness.session.provider = 'claude';
+  harness.session.runnerSessionId = 'claude-old';
+  harness.session.codexThreadId = 'claude-old';
+  const { session, replyLog, orchestrator } = harness;
+  const message = {
+    id: 'msg-5bb',
+    channel: {
+      async sendTyping() {},
+      async send(payload) {
+        replyLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.compactCurrentSession(message, 'thread-1', channelState);
+
+  assert.equal(outcome.ok, true);
+  assert.equal(session.runnerSessionId, null);
+  assert.equal(session.codexThreadId, null);
+  assert.equal(session.pendingCompactSummary, 'rescued claude-old from /repo/demo');
+  assert.equal(session.pendingCompactSourceSessionId, 'claude-old');
+  assert.match(replyLog[0], /已压缩 project session：claude-old/);
+});
+
+test('createPromptOrchestrator.handlePrompt consumes a pending manual compact summary on success', async () => {
+  const prompts = [];
+  const harness = createOrchestrator({
+    runTask: async (options) => {
+      prompts.push(options.prompt);
+      options.onSpawn?.({ pid: 794 });
+      return {
+        ok: true,
+        cancelled: false,
+        timedOut: false,
+        error: '',
+        logs: [],
+        notes: [],
+        reasonings: [],
+        messages: ['done'],
+        finalAnswerMessages: ['final answer'],
+        threadId: 'fresh-session',
+        usage: { input_tokens: 444 },
+      };
+    },
+    resolveCompactStrategySetting: () => ({ strategy: 'hard', source: 'env default' }),
+    resolveCompactEnabledSetting: () => ({ enabled: true, source: 'env default' }),
+    resolveCompactThresholdSetting: () => ({ tokens: 200_000, source: 'env default' }),
+  });
+  harness.session.runnerSessionId = null;
+  harness.session.codexThreadId = null;
+  harness.session.pendingCompactSummary = 'manual summary';
+  harness.session.pendingCompactSourceSessionId = 'old-session';
+  const { session, replyLog, orchestrator } = harness;
+  const message = {
+    id: 'msg-5c',
+    channel: {
+      async sendTyping() {},
+      async send(payload) {
+        replyLog.push(payload);
+      },
+    },
+  };
+  const channelState = { queue: [], cancelRequested: false, activeRun: null };
+
+  const outcome = await orchestrator.handlePrompt(message, 'thread-1', 'continue work', channelState);
+
+  assert.deepEqual(outcome, { ok: true, cancelled: false });
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /【压缩摘要开始】\nmanual summary\n【压缩摘要结束】/);
+  assert.match(prompts[0], /continue work/);
+  assert.equal(session.runnerSessionId, 'fresh-session');
+  assert.equal(session.codexThreadId, 'fresh-session');
+  assert.equal(session.pendingCompactSummary, null);
+  assert.equal(session.pendingCompactSourceSessionId, null);
+  assert.match(replyLog[0], /已加载上一段rollout session：old-session 的手动压缩摘要/);
 });
 
 test('createPromptOrchestrator.handlePrompt auto-continues a pinned native compact run', async () => {

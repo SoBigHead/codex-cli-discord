@@ -315,6 +315,8 @@ export function createSettingsPanel({
   resolveCompactThresholdSetting = () => ({ tokens: 0, source: 'env default' }),
   resolveReplyDeliverySetting = () => ({ mode: 'card_mention', source: 'env default' }),
   getReplyDeliveryDefault = () => ({ mode: 'card_mention', source: 'env default' }),
+  getChannelState = () => null,
+  safeChannelSend = async (target, payload) => target?.channel?.send?.(payload),
   commandActions = {},
   closeRuntimeSession = () => false,
   openWorkspaceBrowser,
@@ -326,6 +328,29 @@ export function createSettingsPanel({
     } catch {
     }
   };
+
+  const shouldStreamProcessMessages = (mode) => mode === 'stream_mention' || mode === 'stream_only';
+  const normalizeProcessActivityKey = (text) => String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+  async function flushActiveRunProcessMessages(interaction, key, session, { beforeMode } = {}) {
+    const afterMode = resolveReplyDeliverySetting(session).mode;
+    if (shouldStreamProcessMessages(beforeMode) || !shouldStreamProcessMessages(afterMode)) return;
+    const activeRun = getChannelState(key)?.activeRun;
+    const activities = Array.isArray(activeRun?.recentActivities) ? activeRun.recentActivities : [];
+    if (!activeRun || activities.length === 0) return;
+
+    if (!activeRun.streamedProcessActivityKeys || !Array.isArray(activeRun.streamedProcessActivityKeys)) {
+      activeRun.streamedProcessActivityKeys = [];
+    }
+    const sentKeys = new Set(activeRun.streamedProcessActivityKeys.map(normalizeProcessActivityKey));
+    for (const activity of activities) {
+      const keyName = normalizeProcessActivityKey(activity);
+      if (!keyName || sentKeys.has(keyName)) continue;
+      sentKeys.add(keyName);
+      activeRun.streamedProcessActivityKeys.push(activity);
+      await safeChannelSend(interaction, activity);
+    }
+  }
 
   function getAvailableSections(session) {
     const provider = getSessionProvider(session);
@@ -1277,6 +1302,9 @@ function formatOverviewSection(snapshot) {
     }
 
     if (parsed.kind === 'set') {
+      const replyDeliveryModeBefore = ['reply', 'default_reply'].includes(parsed.target)
+        ? resolveReplyDeliverySetting(session).mode
+        : null;
       if ((parsed.target === 'model' || parsed.target === 'quick_model') && parsed.value === 'preset') {
         const selectedModel = String(interaction.values?.[0] || '').trim();
         if (!selectedModel) {
@@ -1325,6 +1353,12 @@ function formatOverviewSection(snapshot) {
         commandActions.setGlobalReplyDeliveryModeDefault?.(session, parsed.value);
       } else if (parsed.target === 'default_profile') {
         commandActions.setGlobalCodexProfileDefault?.(session, parsed.value);
+      }
+
+      if (parsed.target === 'reply' || parsed.target === 'default_reply') {
+        await flushActiveRunProcessMessages(interaction, key, session, {
+          beforeMode: replyDeliveryModeBefore,
+        });
       }
 
       if (parsed.target === 'quick_model' || parsed.target === 'quick_model_effort') {

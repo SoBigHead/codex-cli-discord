@@ -1,6 +1,7 @@
 import { createPromptResultRenderer } from './prompt-result-renderer.js';
 import { buildNativeImagePromptNote, stageNativeImageAttachments } from './native-image-inputs.js';
 import { withRetryAction } from './retry-action-button.js';
+import { buildClaudeSessionRescueSummary as defaultBuildClaudeSessionRescueSummary } from './provider-sessions.js';
 import {
   buildExtraInfoPromptLine,
   DEFAULT_EXTRA_INFO_TEMPLATE,
@@ -72,6 +73,7 @@ export function createPromptOrchestrator({
   toOptionalInt,
   extractInputTokensFromUsage,
   composeFinalAnswerText,
+  buildClaudeSessionRescueSummary = defaultBuildClaudeSessionRescueSummary,
   sleep = defaultSleep,
   prepareNativeInputs = async ({ message, session }) => {
     const provider = String(getSessionProvider(session) || '').trim().toLowerCase();
@@ -149,14 +151,29 @@ export function createPromptOrchestrator({
       onLog,
     });
     if (!result.ok) {
+      const error = result.error || truncate(result.logs.join('\n'), 400);
+      const provider = String(getSessionProvider(session) || '').trim().toLowerCase();
+      if (provider === 'claude' && isClaudeContextWindowError(error)) {
+        const rescued = buildClaudeSessionRescueSummary({
+          sessionId: getSessionId(session),
+          workspaceDir,
+        });
+        if (rescued?.ok && rescued.summary) {
+          onLog?.(`Claude session exceeded context window; using local session-file rescue summary from ${rescued.sourceFile || 'session file'}.`, 'compact');
+          return { ok: true, summary: rescued.summary, usage: result.usage, rescued: true };
+        }
+      }
       return {
         ok: false,
         summary: '',
-        error: result.error || truncate(result.logs.join('\n'), 400),
+        error,
       };
     }
 
-    const summary = result.messages.join('\n\n').trim();
+    const summaryParts = Array.isArray(result.finalAnswerMessages) && result.finalAnswerMessages.length > 0
+      ? result.finalAnswerMessages
+      : result.messages;
+    const summary = (Array.isArray(summaryParts) ? summaryParts : []).join('\n\n').trim();
     if (!summary) {
       return { ok: false, summary: '', error: 'empty compact summary' };
     }
@@ -175,6 +192,11 @@ export function createPromptOrchestrator({
       '请在不丢失关键上下文的前提下继续处理以下新请求：',
       userPrompt,
     ].join('\n');
+  }
+
+  function isClaudeContextWindowError(error) {
+    const text = String(error || '').toLowerCase();
+    return text.includes('context window limit') || text.includes('max_output_tokens');
   }
 
   function normalizeTaskRetryPolicy(policy) {
@@ -263,6 +285,33 @@ export function createPromptOrchestrator({
     return mode === 'stream_mention' || mode === 'stream_only';
   }
 
+  function getCurrentReplyDeliveryMode(session) {
+    return resolveReplyDeliverySetting(session).mode;
+  }
+
+  function normalizeProcessActivityKey(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  }
+
+  async function sendStreamProcessMessageIfEnabled(message, session, channelState, text) {
+    if (!shouldStreamProcessMessages(getCurrentReplyDeliveryMode(session))) return;
+    const key = normalizeProcessActivityKey(text);
+    const activeRun = channelState?.activeRun;
+    if (activeRun && key) {
+      if (!Array.isArray(activeRun.streamedProcessActivityKeys)) {
+        activeRun.streamedProcessActivityKeys = [];
+      }
+      const sent = new Set(activeRun.streamedProcessActivityKeys.map(normalizeProcessActivityKey));
+      if (sent.has(key)) return;
+      activeRun.streamedProcessActivityKeys.push(text);
+    }
+    await safeChannelSend(message, text);
+  }
+
+  function applyCurrentTerminalMention(message, session, payload) {
+    return applyTerminalMention(message, payload, getCurrentReplyDeliveryMode(session));
+  }
+
   function applyTerminalMention(message, payload, mode) {
     if (!shouldMentionOnTerminalReply(mode)) return payload;
     const userId = String(message?.author?.id || '').trim();
@@ -278,6 +327,111 @@ export function createPromptOrchestrator({
     return payload;
   }
 
+  async function compactCurrentSession(message, key, channelState = {}) {
+    const session = getSession(key, { channel: message.channel || null });
+    const sessionId = getSessionId(session);
+    const workspaceDir = ensureWorkspace(session, key);
+    const language = normalizeUiLanguage(getSessionLanguage(session));
+    const progress = createProgressReporter({
+      message,
+      channelState,
+      session,
+      language,
+      initialLatestStep: language === 'en'
+        ? `Manual compact requested: ${workspaceDir}`
+        : `已请求手动压缩：${workspaceDir}`,
+      onStreamProcessMessage: async (text) => sendStreamProcessMessageIfEnabled(message, session, channelState, text),
+    });
+    let workspaceLock = null;
+    let progressOutcome = { ok: false, cancelled: false, timedOut: false, error: '' };
+
+    const releaseWorkspaceLock = () => {
+      if (!workspaceLock?.acquired || typeof workspaceLock.release !== 'function') return;
+      try {
+        workspaceLock.release();
+      } catch (err) {
+        console.warn(`Failed to release workspace lock: ${safeError(err)}`);
+      }
+      workspaceLock = null;
+    };
+
+    if (!sessionId) {
+      await safeReply(
+        message,
+        applyCurrentTerminalMention(message, session, language === 'en'
+          ? 'No existing session to compact.'
+          : '当前没有可压缩的会话。'),
+      );
+      return { ok: false, error: 'missing session id' };
+    }
+
+    await progress.start();
+    try {
+      workspaceLock = await acquireWorkspace(
+        workspaceDir,
+        {
+          key,
+          provider: getSessionProvider(session),
+          messageId: message.id,
+          sessionId,
+          sessionName: session.name || null,
+        },
+        {
+          isAborted: () => Boolean(channelState.cancelRequested || channelState.activeRun?.cancelRequested),
+        },
+      );
+
+      if (workspaceLock?.aborted || channelState.cancelRequested) {
+        progressOutcome = { ok: false, cancelled: true, timedOut: false, error: 'cancelled by user' };
+        return { ok: false, cancelled: true };
+      }
+
+      const compactResult = await compactSessionContext({
+        session,
+        workspaceDir,
+        onSpawn: (child) => {
+          setActiveRun(channelState, message, 'manual compact', child, 'compact');
+          progress.sync({ forceEmit: true });
+          if (channelState.cancelRequested) stopChildProcess(child);
+        },
+        wasCancelled: () => Boolean(channelState.cancelRequested || channelState.activeRun?.cancelRequested),
+        onEvent: progress.onEvent,
+        onLog: progress.onLog,
+      });
+
+      releaseWorkspaceLock();
+
+      if (!compactResult.ok) {
+        const error = compactResult.error || 'manual compact failed';
+        progressOutcome = { ok: false, cancelled: false, timedOut: false, error };
+        await safeReply(
+          message,
+          applyCurrentTerminalMention(message, session, language === 'en'
+            ? `❌ Manual compact failed: ${error}`
+            : `❌ 手动压缩失败：${error}`),
+        );
+        return { ok: false, error };
+      }
+
+      session.pendingCompactSummary = compactResult.summary;
+      session.pendingCompactSourceSessionId = sessionId;
+      clearSessionId(session);
+      session.lastInputTokens = null;
+      saveDb();
+      progressOutcome = { ok: true, cancelled: false, timedOut: false, error: '' };
+      await safeReply(
+        message,
+        applyCurrentTerminalMention(message, session, language === 'en'
+          ? `✅ Compacted ${formatProviderSessionTerm(getSessionProvider(session), language)} ${sessionId}. The next message will continue in a fresh session.`
+          : `✅ 已压缩 ${formatProviderSessionTerm(getSessionProvider(session), language)}：${sessionId}。下条消息会用新会话继续。`),
+      );
+      return { ok: true, summary: compactResult.summary };
+    } finally {
+      releaseWorkspaceLock();
+      await progress.finish(progressOutcome);
+    }
+  }
+
   async function handlePrompt(message, key, prompt, channelState) {
     if (channelState.cancelRequested) {
       return { ok: false, cancelled: true };
@@ -289,7 +443,6 @@ export function createPromptOrchestrator({
     const startingPendingForkFromSessionId = String(session?.pendingForkFromSessionId || '').trim() || null;
     const workspaceDir = ensureWorkspace(session, key);
     const language = normalizeUiLanguage(getSessionLanguage(session));
-    const replyDelivery = resolveReplyDeliverySetting(session);
     const taskRetryPolicy = normalizeTaskRetryPolicy(resolveTaskRetrySetting(session));
     const waitingForWorkspaceText = language === 'en'
       ? `Waiting for workspace lock: ${workspaceDir}`
@@ -303,9 +456,7 @@ export function createPromptOrchestrator({
       session,
       language,
       initialLatestStep: waitingForWorkspaceText,
-      onStreamProcessMessage: shouldStreamProcessMessages(replyDelivery.mode)
-        ? async (text) => safeChannelSend(message, text)
-        : null,
+      onStreamProcessMessage: async (text) => sendStreamProcessMessageIfEnabled(message, session, channelState, text),
     });
 
     void message.channel.sendTyping().catch(() => {});
@@ -426,12 +577,78 @@ export function createPromptOrchestrator({
       const runtimeNotes = Array.isArray(nativeInputs.notes) ? [...nativeInputs.notes] : [];
       let nativeCompactSwitchedDuringRetry = false;
       let attemptNumber = 1;
-      let result = await runPromptAttempt({
-        promptText: promptToRun,
-        phase: 'exec',
-      });
+      let skipRetries = false;
+      let result = null;
+      const pendingCompactSummary = String(session.pendingCompactSummary || '').trim();
+      const pendingCompactSourceSessionId = String(session.pendingCompactSourceSessionId || '').trim();
+      let consumedPendingCompactSummary = false;
 
-      while (shouldAutoRetryResult(result) && attemptNumber < taskRetryPolicy.maxAttempts) {
+      if (pendingCompactSummary) {
+        promptToRun = buildPromptFromCompactedContext(pendingCompactSummary, promptToRun);
+        consumedPendingCompactSummary = true;
+        runtimeNotes.push(
+          pendingCompactSourceSessionId
+            ? `已加载上一段${formatProviderSessionTerm(getSessionProvider(session), language)}：${pendingCompactSourceSessionId} 的手动压缩摘要，本轮在新会话里继续。`
+            : `已加载上一段${formatProviderSessionTerm(getSessionProvider(session), language)}的手动压缩摘要，本轮在新会话里继续。`,
+        );
+      }
+
+      if (shouldCompactSession(session)) {
+        const compactSessionId = getSessionId(session);
+        progress.setLatestStep(
+          language === 'en'
+            ? 'Context is over the auto-compact threshold; compacting before the next run.'
+            : '上下文已超过自动压缩阈值，正在先压缩再继续。',
+        );
+        const compactResult = await compactSessionContext({
+          session,
+          workspaceDir,
+          onSpawn: (child) => {
+            setActiveRun(channelState, message, prompt, child, 'compact');
+            progress.sync({ forceEmit: true });
+            if (channelState.cancelRequested) stopChildProcess(child);
+          },
+          wasCancelled: () => Boolean(channelState.cancelRequested || channelState.activeRun?.cancelRequested),
+          onEvent: progress.onEvent,
+          onLog: progress.onLog,
+        });
+
+        if (compactResult.ok) {
+          clearSessionId(session);
+          session.lastInputTokens = null;
+          saveDb();
+          promptToRun = buildPromptFromCompactedContext(compactResult.summary, promptToRun);
+          runtimeNotes.push(
+            language === 'en'
+              ? `Auto-compacted the previous ${formatProviderSessionTerm(getSessionProvider(session), language)}${compactSessionId ? ` ${compactSessionId}` : ''}; continuing in a fresh session.`
+              : `已自动压缩上一段${formatProviderSessionTerm(getSessionProvider(session), language)}${compactSessionId ? `：${compactSessionId}` : ''}，本轮会在新会话里继续。`,
+          );
+        } else {
+          skipRetries = true;
+          result = {
+            ok: false,
+            cancelled: Boolean(channelState.cancelRequested || channelState.activeRun?.cancelRequested),
+            timedOut: false,
+            error: compactResult.error ? `自动压缩失败: ${compactResult.error}` : '自动压缩失败',
+            logs: [],
+            notes: [],
+            reasonings: [],
+            messages: [],
+            finalAnswerMessages: [],
+            threadId: compactSessionId,
+            usage: compactResult.usage || null,
+          };
+        }
+      }
+
+      if (!result) {
+        result = await runPromptAttempt({
+          promptText: promptToRun,
+          phase: 'exec',
+        });
+      }
+
+      while (!skipRetries && shouldAutoRetryResult(result) && attemptNumber < taskRetryPolicy.maxAttempts) {
         if (nativeCompactAutoContinueActive) {
           const currentSessionId = getSessionId(session);
           const retrySessionId = String(result.threadId || '').trim() || null;
@@ -577,6 +794,11 @@ export function createPromptOrchestrator({
           sessionDirty = true;
         }
       }
+      if (result.ok && consumedPendingCompactSummary) {
+        session.pendingCompactSummary = null;
+        session.pendingCompactSourceSessionId = null;
+        sessionDirty = true;
+      }
       if (sessionDirty) {
         saveDb();
       }
@@ -586,7 +808,7 @@ export function createPromptOrchestrator({
       if (!result.ok) {
         if (result.cancelled) {
           progressOutcome = { ok: false, cancelled: true, timedOut: false, error: result.error || 'cancelled' };
-          await safeReply(message, applyTerminalMention(message, '🛑 当前任务已中断。', replyDelivery.mode));
+          await safeReply(message, applyCurrentTerminalMention(message, session, '🛑 当前任务已中断。'));
           return { ok: false, cancelled: true };
         }
 
@@ -626,7 +848,7 @@ export function createPromptOrchestrator({
         };
         await safeReply(
           message,
-          applyTerminalMention(message, withRetryAction(failText, message?.author?.id || null), replyDelivery.mode),
+          applyCurrentTerminalMention(message, session, withRetryAction(failText, message?.author?.id || null)),
         );
         return { ok: false, cancelled: false };
       }
@@ -635,12 +857,12 @@ export function createPromptOrchestrator({
       const parts = splitForDiscord(body, resultChunkChars);
 
       if (parts.length === 0) {
-        await safeReply(message, applyTerminalMention(message, '✅ 完成（无可展示文本输出）。', replyDelivery.mode));
+        await safeReply(message, applyCurrentTerminalMention(message, session, '✅ 完成（无可展示文本输出）。'));
         progressOutcome = { ok: true, cancelled: false, timedOut: false, error: '' };
         return { ok: true, cancelled: false };
       }
 
-      await safeReply(message, applyTerminalMention(message, parts[0], replyDelivery.mode));
+      await safeReply(message, applyCurrentTerminalMention(message, session, parts[0]));
       for (let i = 1; i < parts.length; i += 1) {
         await safeChannelSend(message, parts[i]);
       }
@@ -665,6 +887,7 @@ export function createPromptOrchestrator({
     createProgressReporter,
     shouldCompactSession,
     compactSessionContext,
+    compactCurrentSession,
     buildPromptFromCompactedContext,
     composeResultText,
     handlePrompt,

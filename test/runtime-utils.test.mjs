@@ -42,6 +42,11 @@ test('runtime-utils truncate and safeError are stable', () => {
 
 test('runtime-utils extracts input tokens from direct and nested usage payloads', () => {
   assert.equal(extractInputTokensFromUsage({ input_tokens: 123 }), 123);
+  assert.equal(extractInputTokensFromUsage({
+    input_tokens: 123,
+    cache_read_input_tokens: 456,
+    cache_creation_input_tokens: 7,
+  }), 586);
   assert.equal(extractInputTokensFromUsage({ nested: { prompt_token_count: 456 } }), 456);
   assert.equal(extractInputTokensFromUsage({ nested: { value: 'x' } }), null);
 });

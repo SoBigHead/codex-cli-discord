@@ -58,13 +58,16 @@ export function createPromptRuntime({
     ...promptOrchestratorOptions,
     presentation,
   });
-  const { handlePrompt } = createPromptOrchestratorFn({
+  const { handlePrompt, compactCurrentSession } = createPromptOrchestratorFn({
     ...promptOrchestratorOptions,
     createProgressReporter,
     formatTimeoutLabel: presentation.formatTimeoutLabel,
     setActiveRun,
     runTask: (options) => runProviderTask(options),
   });
+  const compactSession = compactCurrentSession
+    ? (message, key) => compactCurrentSession(message, key, getChannelState(key))
+    : async () => ({ ok: false, error: 'manual compact unavailable' });
   const { enqueuePrompt, retryLastPrompt } = createChannelQueueFn({
     ...channelQueueOptions,
     getChannelState,
@@ -86,6 +89,7 @@ export function createPromptRuntime({
     getRuntimeSnapshot,
     getAllRuntimeSnapshots,
     handlePrompt,
+    compactSession,
     runProviderTask,
     steerProviderTask,
     runCodex: runnerExecutor.runCodex || runProviderTask,

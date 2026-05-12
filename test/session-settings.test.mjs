@@ -524,6 +524,7 @@ test('session-settings parses compact, reasoning and workspace command inputs', 
     type: 'set_threshold',
     tokens: 99_999,
   });
+  assert.deepEqual(parseCompactConfigFromText('run'), { type: 'run' });
   assert.deepEqual(parseCompactConfigFromText('continue'), { type: 'invalid' });
   assert.deepEqual(parseCompactConfigFromText('reset'), { type: 'reset' });
   assert.deepEqual(parseFastModeAction('on'), { type: 'set', enabled: true });

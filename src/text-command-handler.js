@@ -137,6 +137,7 @@ export function createTextCommandHandler({
   getRuntimeSnapshot = () => ({ running: false, queued: 0 }),
   cancelChannelWork,
   closeRuntimeSession = () => false,
+  compactSession,
   forkCodexThread,
   resolveForkWorkspace,
   getCodexThreadGoal,
@@ -666,6 +667,15 @@ export function createTextCommandHandler({
         }
         if (parsed.type === 'status') {
           await safeReply(message, formatCompactConfigReport(language, session, false));
+          break;
+        }
+        if (parsed.type === 'run') {
+          if (typeof compactSession !== 'function') {
+            await safeReply(message, language === 'en' ? '❌ Manual compact is unavailable.' : '❌ 当前环境不能手动压缩。');
+            break;
+          }
+          await safeReply(message, language === 'en' ? 'Manual compact started.' : '已开始手动压缩。');
+          await compactSession(message, key);
           break;
         }
         commandActions.applyCompactConfig(session, parsed);

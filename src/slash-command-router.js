@@ -155,6 +155,7 @@ export function createSlashCommandRouter({
   cancelChannelWork,
   closeRuntimeSession = () => false,
   retryLastPrompt,
+  compactSession,
   forkCodexThread,
   resolveForkWorkspace,
   getCodexThreadGoal,
@@ -619,6 +620,21 @@ export function createSlashCommandRouter({
         content: formatCompactConfigReport(language, session, false),
         flags: 64,
       });
+      return;
+    }
+    if (parsed.type === 'run') {
+      if (typeof compactSession !== 'function') {
+        await respond({
+          content: language === 'en' ? '❌ Manual compact is unavailable.' : '❌ 当前环境不能手动压缩。',
+          flags: 64,
+        });
+        return;
+      }
+      await respond({
+        content: language === 'en' ? 'Manual compact started.' : '已开始手动压缩。',
+        flags: 64,
+      });
+      await compactSession(createInteractionPromptMessage(interaction), key);
       return;
     }
     commandActions.applyCompactConfig(session, parsed);

@@ -134,7 +134,15 @@ const TextInputStyle = {
   Short: 'short',
 };
 
-function createPanel({ session, botProvider = null, openWorkspaceBrowser, commandActions = {}, modelCatalog } = {}) {
+function createPanel({
+  session,
+  botProvider = null,
+  openWorkspaceBrowser,
+  commandActions = {},
+  modelCatalog,
+  getChannelState,
+  safeChannelSend,
+} = {}) {
   return createSettingsPanel({
     botProvider,
     defaultUiLanguage: 'zh',
@@ -259,6 +267,8 @@ function createPanel({ session, botProvider = null, openWorkspaceBrowser, comman
       mode: session?.globalReplyDeliveryMode || 'card_mention',
       source: session?.globalReplyDeliverySource || 'env default',
     }),
+    getChannelState,
+    safeChannelSend,
     commandActions,
     openWorkspaceBrowser,
     slashRef: (base) => `/cx_${base}`,
@@ -429,6 +439,58 @@ test('createSettingsPanel updates reply delivery and shows effective source', as
   assert.match(updates[0].content, /当前项：回复方式/);
   assert.match(updates[0].content, /回复方式：发送过程消息，完成时触发 @（当前频道）/);
   assert.match(updates[0].content, /默认回复方式：只更新进度卡，完成时触发 @（环境默认）/);
+});
+
+test('createSettingsPanel flushes current process messages when stream delivery is enabled mid-run', async () => {
+  const session = {
+    provider: 'codex',
+    language: 'zh',
+    mode: 'safe',
+    replyDeliveryMode: null,
+  };
+  const streamed = [];
+  const state = {
+    activeRun: {
+      recentActivities: ['先检查移动端 pointer 事件。', '确认按钮是否被覆盖。'],
+      streamedProcessActivityKeys: ['先检查移动端 pointer 事件。'],
+    },
+  };
+  const updates = [];
+  const panel = createPanel({
+    session,
+    getChannelState: () => state,
+    safeChannelSend: async (_interaction, payload) => {
+      streamed.push(payload);
+    },
+    commandActions: {
+      setReplyDeliveryMode(currentSession, mode) {
+        currentSession.replyDeliveryMode = mode;
+        return { replyDeliveryMode: currentSession.replyDeliveryMode };
+      },
+    },
+  });
+
+  await panel.handleSettingsPanelInteraction({
+    customId: 'stg:set:reply:stream_mention:12345',
+    channelId: 'thread-1',
+    user: { id: '12345' },
+    async update(payload) {
+      updates.push(payload);
+    },
+    async reply() {
+      throw new Error('should not reply');
+    },
+    async showModal() {
+      throw new Error('should not show modal');
+    },
+  });
+
+  assert.deepEqual(streamed, ['确认按钮是否被覆盖。']);
+  assert.deepEqual(state.activeRun.streamedProcessActivityKeys, [
+    '先检查移动端 pointer 事件。',
+    '确认按钮是否被覆盖。',
+  ]);
+  assert.match(updates[0].content, /回复方式：发送过程消息，完成时触发 @（当前频道）/);
 });
 
 test('createSettingsPanel updates Claude runtime mode and closes the hot process without clearing session id', async () => {

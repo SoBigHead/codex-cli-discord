@@ -38,7 +38,14 @@ export function extractInputTokensFromUsage(usage) {
 
   for (const key of directKeys) {
     const n = toOptionalInt(usage[key]);
-    if (n !== null) return n;
+    if (n === null) continue;
+    const cacheRead = toOptionalInt(usage.cache_read_input_tokens)
+      ?? toOptionalInt(usage.cacheReadInputTokens)
+      ?? 0;
+    const cacheCreation = toOptionalInt(usage.cache_creation_input_tokens)
+      ?? toOptionalInt(usage.cacheCreationInputTokens)
+      ?? 0;
+    return n + cacheRead + cacheCreation;
   }
 
   const queue = [usage];

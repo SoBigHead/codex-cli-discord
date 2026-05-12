@@ -13,6 +13,8 @@ const PROVIDER_SCOPED_SESSION_DEFAULTS = Object.freeze({
   runtimeMode: null,
   busyPromptMode: null,
   pendingForkFromSessionId: null,
+  pendingCompactSummary: null,
+  pendingCompactSourceSessionId: null,
   configOverrides: Object.freeze([]),
 });
 
@@ -31,6 +33,8 @@ export const PROVIDER_SCOPED_SESSION_FIELDS = Object.freeze([
   'runtimeMode',
   'busyPromptMode',
   'pendingForkFromSessionId',
+  'pendingCompactSummary',
+  'pendingCompactSourceSessionId',
   'configOverrides',
 ]);
 

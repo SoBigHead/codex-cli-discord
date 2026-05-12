@@ -1,6 +1,9 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
 
+const DEFAULT_APP_SERVER_TIMEOUT_MS = 10_000;
+const DEFAULT_FORK_TIMEOUT_MS = 30_000;
+
 function normalizeText(value) {
   const text = String(value || '').trim();
   return text || null;
@@ -161,7 +164,7 @@ export function createCodexAppServerClient({
   codexBin = 'codex',
   env = process.env,
   spawnFn = spawn,
-  timeoutMs = 10_000,
+  timeoutMs = DEFAULT_APP_SERVER_TIMEOUT_MS,
   clientInfo = { name: 'agents-in-discord', version: '0' },
   capabilities = { experimentalApi: true },
   enabledFeatures = [],
@@ -318,7 +321,10 @@ export function createCodexAppServerClient({
 }
 
 export async function forkCodexThread(options = {}) {
-  return createCodexAppServerClient(options).forkThread(options);
+  const timeoutMs = options.timeoutMs === undefined || options.timeoutMs === null
+    ? DEFAULT_FORK_TIMEOUT_MS
+    : options.timeoutMs;
+  return createCodexAppServerClient({ ...options, timeoutMs }).forkThread(options);
 }
 
 function createGoalClient(options = {}) {

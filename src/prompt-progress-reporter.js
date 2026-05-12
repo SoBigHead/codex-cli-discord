@@ -583,7 +583,7 @@ export function createPromptProgressReporterFactory({
     const recentActivities = Array.isArray(channelState?.activeRun?.recentActivities)
       ? [...channelState.activeRun.recentActivities]
       : [];
-    const pendingActivities = [];
+    const pendingStreamActivities = [];
     let lastActivityPushAt = 0;
     let isEmitting = false;
     let rerunEmit = false;
@@ -684,30 +684,31 @@ export function createPromptProgressReporterFactory({
       }
     };
 
-    const enqueueActivity = (activityText) => {
+    const appendActivity = (activityText) => {
       const text = String(activityText || '').replace(/\s+/g, ' ').trim();
-      if (!text) return;
+      if (!text) return false;
       const key = normalizeActivityKey(text);
-      if (!key) return;
+      if (!key) return false;
 
       const latestVisible = normalizeActivityKey(recentActivities[recentActivities.length - 1]);
-      if (latestVisible && latestVisible === key) return;
-      const latestQueued = normalizeActivityKey(pendingActivities[pendingActivities.length - 1]);
-      if (latestQueued && latestQueued === key) return;
+      if (latestVisible && latestVisible === key) return false;
+      const latestQueued = normalizeActivityKey(pendingStreamActivities[pendingStreamActivities.length - 1]);
+      if (latestQueued && latestQueued === key) return false;
 
-      pendingActivities.push(text);
-      if (pendingActivities.length > 80) {
-        pendingActivities.splice(0, pendingActivities.length - 80);
+      appendRecentActivity(recentActivities, text);
+      pendingStreamActivities.push(text);
+      if (pendingStreamActivities.length > 80) {
+        pendingStreamActivities.splice(0, pendingStreamActivities.length - 80);
       }
+      return true;
     };
 
-    const pushOneActivity = ({ force = false } = {}) => {
-      if (!pendingActivities.length) return false;
+    const pushOneStreamActivity = ({ force = false } = {}) => {
+      if (!pendingStreamActivities.length) return false;
       const currentTime = now();
       if (!force && currentTime - lastActivityPushAt < progressProcessPushIntervalMs) return false;
-      const next = pendingActivities.shift();
+      const next = pendingStreamActivities.shift();
       if (!next) return false;
-      appendRecentActivity(recentActivities, next);
       if (typeof onStreamProcessMessageForRun === 'function') {
         try {
           Promise.resolve(
@@ -752,7 +753,7 @@ export function createPromptProgressReporterFactory({
         timer?.unref?.();
         activityTimer = setIntervalFn(() => {
           if (stopped) return;
-          if (!pushOneActivity()) return;
+          if (!pushOneStreamActivity()) return;
           syncActiveRun();
           void emit(false);
         }, progressProcessPushIntervalMs);
@@ -804,11 +805,13 @@ export function createPromptProgressReporterFactory({
       }
       for (const rawActivity of safeRawActivities) {
         if (!rawActivity) continue;
-        enqueueActivity(rawActivity);
-        if (recentActivities.length === 0) {
-          pushOneActivity({ force: true });
-        } else {
-          pushOneActivity();
+        const appended = appendActivity(rawActivity);
+        if (appended) {
+          if (lastActivityPushAt === 0) {
+            pushOneStreamActivity({ force: true });
+          } else {
+            pushOneStreamActivity();
+          }
         }
       }
       if (nextPlan) {
@@ -847,9 +850,7 @@ export function createPromptProgressReporterFactory({
       stopped = true;
       if (timer) clearIntervalFn(timer);
       if (activityTimer) clearIntervalFn(activityTimer);
-      while (pushOneActivity({ force: true })) {
-        // Drain buffered activity lines into the final card.
-      }
+      pendingStreamActivities.length = 0;
       latestStep = getFinalLatestStep({
         ok,
         cancelled,

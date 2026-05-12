@@ -263,6 +263,9 @@ export function parseCompactConfigAction(key, value = '') {
   if (!normalizedKey || normalizedKey === 'status') {
     return { type: 'status' };
   }
+  if (['run', 'now', 'compact', 'manual', 'manual_run'].includes(normalizedKey)) {
+    return { type: 'run' };
+  }
   if (['hard', 'native', 'off'].includes(normalizedKey)) {
     return { type: 'set_strategy', strategy: normalizedKey };
   }

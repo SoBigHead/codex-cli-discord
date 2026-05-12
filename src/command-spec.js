@@ -107,6 +107,7 @@ function getSessionAliasDescriptions(aliases = []) {
 function getCompactKeyChoices(botProvider = null) {
   const choices = [
     { name: 'status', value: 'status' },
+    { name: 'run', value: 'run' },
     { name: 'strategy', value: 'strategy' },
     { name: 'token_limit', value: 'token_limit' },
   ];
