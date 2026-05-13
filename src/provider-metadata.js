@@ -59,6 +59,46 @@ const PROVIDER_METADATA = Object.freeze({
       workspaceSessionPolicy: 'strict',
     }),
   }),
+  kiro: Object.freeze({
+    aliases: Object.freeze(['kiro', 'amazon', 'aws']),
+    displayName: 'Kiro CLI',
+    shortName: 'Kiro',
+    defaultBin: 'kiro-cli',
+    binEnvName: 'KIRO_BIN',
+    defaultSlashPrefix: 'kr',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze([]),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'off']),
+        supportsNativeStrategy: false,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
+  kimi: Object.freeze({
+    aliases: Object.freeze(['kimi', 'moonshot']),
+    displayName: 'Kimi CLI',
+    shortName: 'Kimi',
+    defaultBin: 'kimi',
+    binEnvName: 'KIMI_BIN',
+    defaultSlashPrefix: 'km',
+    capabilities: Object.freeze({
+      reasoningEffortLevels: Object.freeze([]),
+      rawConfigOverrides: Object.freeze({
+        supported: false,
+      }),
+      compact: Object.freeze({
+        strategies: Object.freeze(['hard', 'off']),
+        supportsNativeStrategy: false,
+        supportsNativeLimit: false,
+      }),
+      workspaceSessionPolicy: 'strict',
+    }),
+  }),
 });
 
 function normalizeCompactStrategyValue(value) {
