@@ -395,9 +395,10 @@ const PROJECT_UPGRADE_INITIAL_DELAY_MS = normalizeIntervalMs(
   30_000,
   1000,
 );
+const allowedChannelIdsForUpgradeNotify = ALLOWED_CHANNEL_IDS instanceof Set ? ALLOWED_CHANNEL_IDS : new Set();
 const PROJECT_UPGRADE_NOTIFY_CHANNEL_IDS = parseCsvSet(
-  process.env.AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS || [...ALLOWED_CHANNEL_IDS].join(','),
-);
+  process.env.AGENTS_IN_DISCORD_UPGRADE_NOTIFY_CHANNEL_IDS || [...allowedChannelIdsForUpgradeNotify].join(','),
+) || new Set();
 const PROJECT_UPGRADE_ADMIN_USER_IDS = parseCsvSet(
   process.env.AGENTS_IN_DISCORD_UPGRADE_ADMIN_USER_IDS || '',
 );
