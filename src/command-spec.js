@@ -42,6 +42,7 @@ const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 
 
 const COMMAND_ALIASES = Object.freeze({
   c: 'cancel',
+  dq: 'dequeue',
   abort: 'cancel',
   stop: 'cancel',
   fresh: 'new',

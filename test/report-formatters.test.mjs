@@ -489,6 +489,7 @@ test('createReportFormatters.formatHelpReport documents browse actions and provi
   assert.match(sharedHelp, /!provider <codex\|claude\|gemini\|status>/);
   assert.match(sharedHelp, /!setdir <path\|browse\|default\|status>/);
   assert.match(sharedHelp, /!setdefaultdir <path\|browse\|clear\|status>/);
+  assert.match(sharedHelp, /!dq/);
   assert.match(sharedHelp, /native runtime store/);
   assert.match(sharedHelp, /!rollout_resume/);
   assert.match(sharedHelp, /!rollout_sessions/);

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { createChannelQueue } from '../src/channel-queue.js';
 import { createChannelRuntimeStore } from '../src/channel-runtime.js';
 
-function createMessage(id, replyLog, reactionLog) {
+function createMessage(id, replyLog, reactionLog, overrides = {}) {
   const removals = [];
   const cache = new Map();
   cache.set('⚡', {
@@ -36,6 +36,7 @@ function createMessage(id, replyLog, reactionLog) {
     async reply(payload) {
       replyLog.push({ id, payload });
     },
+    ...overrides,
   };
 }
 
@@ -173,6 +174,132 @@ test('createChannelQueue falls back to queue when steer fails', async () => {
   assert.equal(state.queue.length, 1);
   assert.match(replyLog[0].payload, /插入当前任务失败（cannot steer a review turn）/);
   assert.match(replyLog[0].payload, /已加入队列/);
+});
+
+test('createChannelQueue dequeues the requester last queued prompt without cancelling the running task', async () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = runtime.getChannelState('thread-1');
+  state.running = true;
+  state.activeRun = { messageId: 'running-message', child: { pid: 123, killed: false, kill() { this.killed = true; } } };
+  const replyLog = [];
+  const reactionLog = [];
+  const queue = createChannelQueue({
+    getChannelState: runtime.getChannelState,
+    getSession: () => ({ provider: 'codex' }),
+    resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
+    safeReply: async (message, payload) => replyLog.push({ id: message.id, payload }),
+    safeError: (error) => error.message,
+    handlePrompt: async () => {
+      throw new Error('queued prompt should not run');
+    },
+  });
+
+  await queue.enqueuePrompt(createMessage('a1', replyLog, reactionLog, { author: { id: 'user-a' } }), 'thread-1', 'a first');
+  await queue.enqueuePrompt(createMessage('b1', replyLog, reactionLog, { author: { id: 'user-b' } }), 'thread-1', 'b first');
+  await queue.enqueuePrompt(createMessage('a2', replyLog, reactionLog, { author: { id: 'user-a' } }), 'thread-1', 'a second');
+
+  const outcome = queue.dequeuePrompt('thread-1', {
+    requesterUserId: 'user-a',
+    selector: { type: 'last' },
+  });
+
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.removedCount, 1);
+  assert.equal(outcome.removed[0].content, 'a second');
+  assert.deepEqual(state.queue.map((job) => job.content), ['a first', 'b first']);
+  assert.equal(state.running, true);
+  assert.equal(state.activeRun.child.killed, false);
+});
+
+test('createChannelQueue enforces dequeue ownership and supports manager all', async () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = runtime.getChannelState('thread-1');
+  state.running = true;
+  state.activeRun = { messageId: 'running-message', child: { killed: false, kill() { this.killed = true; } } };
+  const replyLog = [];
+  const reactionLog = [];
+  const queue = createChannelQueue({
+    getChannelState: runtime.getChannelState,
+    getSession: () => ({ provider: 'codex' }),
+    resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
+    safeReply: async (message, payload) => replyLog.push({ id: message.id, payload }),
+    safeError: (error) => error.message,
+    handlePrompt: async () => ({ ok: true, cancelled: false }),
+  });
+  const aMessage = createMessage('a1', replyLog, reactionLog, { author: { id: 'user-a' } });
+  const bMessage = createMessage('b1', replyLog, reactionLog, { author: { id: 'user-b' } });
+  await queue.enqueuePrompt(aMessage, 'thread-1', 'a first');
+  await queue.enqueuePrompt(bMessage, 'thread-1', 'b first');
+
+  assert.deepEqual(queue.dequeuePrompt('thread-1', {
+    requesterUserId: 'user-b',
+    selector: { type: 'index', index: 1 },
+  }), {
+    ok: false,
+    reason: 'forbidden',
+    removedCount: 0,
+  });
+
+  const byReply = queue.dequeuePrompt('thread-1', {
+    requesterUserId: 'user-a',
+    selector: { type: 'message', messageId: aMessage.id },
+  });
+  assert.equal(byReply.ok, true);
+  assert.equal(byReply.removed[0].messageId, aMessage.id);
+  assert.deepEqual(state.queue.map((job) => job.content), ['b first']);
+
+  const allForbidden = queue.dequeuePrompt('thread-1', {
+    requesterUserId: 'user-b',
+    selector: { type: 'all' },
+    isManager: false,
+  });
+  assert.equal(allForbidden.ok, false);
+  assert.equal(allForbidden.reason, 'forbidden_all');
+
+  const all = queue.dequeuePrompt('thread-1', {
+    requesterUserId: 'manager',
+    selector: { type: 'all' },
+    isManager: true,
+  });
+  assert.equal(all.ok, true);
+  assert.equal(all.removedCount, 1);
+  assert.equal(state.queue.length, 0);
+  assert.equal(state.running, true);
+  assert.equal(state.activeRun.child.killed, false);
+});
+
+test('createChannelQueue refuses to dequeue an already started message', () => {
+  const runtime = createChannelRuntimeStore({
+    cloneProgressPlan: (plan) => (plan ? JSON.parse(JSON.stringify(plan)) : null),
+    truncate: (text, max) => (text.length <= max ? text : `${text.slice(0, max - 3)}...`),
+  });
+  const state = runtime.getChannelState('thread-1');
+  state.running = true;
+  state.activeRun = { messageId: 'running-message', child: { killed: false, kill() { this.killed = true; } } };
+  const queue = createChannelQueue({
+    getChannelState: runtime.getChannelState,
+    getSession: () => ({ provider: 'codex' }),
+    resolveSecurityContext: () => ({ maxQueuePerChannel: 10 }),
+    safeReply: async () => {},
+    safeError: (error) => error.message,
+    handlePrompt: async () => ({ ok: true, cancelled: false }),
+  });
+
+  const outcome = queue.dequeuePrompt('thread-1', {
+    requesterUserId: 'user-a',
+    selector: { type: 'message', messageId: 'running-message' },
+  });
+
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.reason, 'already_started');
+  assert.equal(state.running, true);
+  assert.equal(state.activeRun.child.killed, false);
 });
 
 test('createChannelQueue falls back to message client user id when getCurrentUserId is omitted', async () => {

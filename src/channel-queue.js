@@ -15,6 +15,8 @@ export function createChannelQueue({
   clearLastFailedPrompt = () => {},
   getLastFailedPrompt = () => null,
 } = {}) {
+  let nextQueueItemId = 1;
+
   function resolveCurrentUserId(message) {
     const explicit = String(getCurrentUserId?.() || '').trim();
     if (explicit) return explicit;
@@ -24,6 +26,14 @@ export function createChannelQueue({
       || '',
     ).trim();
     return fromClient || null;
+  }
+
+  function normalizeUserId(value) {
+    return String(value || '').trim() || null;
+  }
+
+  function normalizeMessageId(value) {
+    return String(value || '').trim() || null;
   }
 
   function hasMessageAttachments(message) {
@@ -107,11 +117,16 @@ export function createChannelQueue({
 
     const queuedAhead = (state.running ? 1 : 0) + state.queue.length;
     state.queue.push({
+      id: `q-${nextQueueItemId}`,
       message,
       key,
       content,
+      authorId: normalizeUserId(message?.author?.id),
+      messageId: normalizeMessageId(message?.id),
+      channelId: normalizeMessageId(message?.channel?.id),
       enqueuedAt: Date.now(),
     });
+    nextQueueItemId += 1;
 
     if (queuedAhead > 0) {
       const steerFailure = steerAttempt && !steerAttempt.steered
@@ -166,6 +181,77 @@ export function createChannelQueue({
       rememberFailedPrompt(key, failedPrompt);
       throw err;
     }
+  }
+
+  function findQueueIndex(state, selector, requesterUserId) {
+    if (selector?.type === 'index') {
+      const index = Number(selector.index);
+      if (!Number.isInteger(index) || index <= 0) return -1;
+      return index - 1;
+    }
+    if (selector?.type === 'message') {
+      const messageId = normalizeMessageId(selector.messageId);
+      if (!messageId) return -1;
+      return state.queue.findIndex((job) => normalizeMessageId(job.messageId || job.message?.id) === messageId);
+    }
+    for (let i = state.queue.length - 1; i >= 0; i -= 1) {
+      const jobAuthorId = normalizeUserId(state.queue[i]?.authorId || state.queue[i]?.message?.author?.id);
+      if (jobAuthorId && requesterUserId && jobAuthorId === requesterUserId) return i;
+    }
+    return -1;
+  }
+
+  function isStartedMessage(state, selector) {
+    if (selector?.type !== 'message') return false;
+    const messageId = normalizeMessageId(selector.messageId);
+    if (!messageId) return false;
+    return normalizeMessageId(state.activeRun?.messageId) === messageId;
+  }
+
+  function dequeuePrompt(key, {
+    requesterUserId = null,
+    selector = { type: 'last' },
+    isManager = false,
+  } = {}) {
+    const state = getChannelState(key);
+    const normalizedRequesterId = normalizeUserId(requesterUserId);
+    if (selector?.type === 'all') {
+      if (!isManager) {
+        return { ok: false, reason: 'forbidden_all', removedCount: 0 };
+      }
+      const removed = state.queue.splice(0);
+      return {
+        ok: true,
+        removed,
+        removedCount: removed.length,
+        remainingQueued: state.queue.length,
+        running: Boolean(state.running || state.activeRun),
+      };
+    }
+
+    const index = findQueueIndex(state, selector, normalizedRequesterId);
+    if (index < 0 || index >= state.queue.length) {
+      return {
+        ok: false,
+        reason: isStartedMessage(state, selector) ? 'already_started' : 'not_found',
+        removedCount: 0,
+      };
+    }
+
+    const job = state.queue[index];
+    const jobAuthorId = normalizeUserId(job.authorId || job.message?.author?.id);
+    if (!isManager && jobAuthorId && normalizedRequesterId && jobAuthorId !== normalizedRequesterId) {
+      return { ok: false, reason: 'forbidden', removedCount: 0 };
+    }
+
+    const removed = state.queue.splice(index, 1);
+    return {
+      ok: true,
+      removed,
+      removedCount: removed.length,
+      remainingQueued: state.queue.length,
+      running: Boolean(state.running || state.activeRun),
+    };
   }
 
   async function processPromptQueue(key) {
@@ -228,6 +314,7 @@ export function createChannelQueue({
 
   return {
     enqueuePrompt,
+    dequeuePrompt,
     retryLastPrompt,
   };
 }

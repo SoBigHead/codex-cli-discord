@@ -68,7 +68,7 @@ export function createPromptRuntime({
   const compactSession = compactCurrentSession
     ? (message, key) => compactCurrentSession(message, key, getChannelState(key))
     : async () => ({ ok: false, error: 'manual compact unavailable' });
-  const { enqueuePrompt, retryLastPrompt } = createChannelQueueFn({
+  const { enqueuePrompt, dequeuePrompt, retryLastPrompt } = createChannelQueueFn({
     ...channelQueueOptions,
     getChannelState,
     handlePrompt,
@@ -81,6 +81,7 @@ export function createPromptRuntime({
   return {
     ...presentation,
     enqueuePrompt,
+    dequeuePrompt,
     retryLastPrompt,
     getChannelState,
     setActiveRun,

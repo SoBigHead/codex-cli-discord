@@ -62,6 +62,61 @@ function buildGoalTextInput(arg = '', attachments = null) {
   return buildPromptFromMessage(text, attachments);
 }
 
+function resolveDequeueReplyMessageId(message) {
+  return String(
+    message?.reference?.messageId
+    || message?.reference?.message_id
+    || message?.reference?.message?.id
+    || '',
+  ).trim();
+}
+
+function parseDequeueTextInput(arg = '', message = null) {
+  const text = String(arg || '').trim();
+  if (!text) {
+    const messageId = resolveDequeueReplyMessageId(message);
+    return messageId
+      ? { ok: true, selector: { type: 'message', messageId } }
+      : { ok: true, selector: { type: 'last' } };
+  }
+  if (text.toLowerCase() === 'all') return { ok: true, selector: { type: 'all' } };
+  if (/^\d+$/.test(text)) {
+    const index = Number(text);
+    if (Number.isSafeInteger(index) && index > 0) {
+      return { ok: true, selector: { type: 'index', index } };
+    }
+  }
+  return { ok: false, reason: 'invalid' };
+}
+
+function formatDequeueOutcome(outcome) {
+  if (outcome?.ok) {
+    if (outcome.selector?.type === 'all') {
+      return `🗑️ 已清空 ${outcome.removedCount || 0} 条排队消息，当前任务未受影响。`;
+    }
+    return `🗑️ 已撤回 ${outcome.removedCount || 0} 条排队消息，当前任务继续运行。`;
+  }
+  if (outcome?.reason === 'forbidden') return '❌ 只能撤回你自己的排队消息。';
+  if (outcome?.reason === 'forbidden_all') return '❌ 只有管理员可以使用 `!dq all`。';
+  if (outcome?.reason === 'already_started') return 'ℹ️ 这条消息已经开始执行了。需要取消当前任务请用 `!c`。';
+  if (outcome?.reason === 'unavailable') return '❌ 当前环境暂不支持 `!dq`。';
+  if (outcome?.reason === 'invalid') {
+    return '用法：`!dq [序号|all]`，也可以回复原排队消息后发送 `!dq`。';
+  }
+  return 'ℹ️ 没有找到你可撤回的排队消息。';
+}
+
+async function reactDequeuedMessages(outcome) {
+  const removed = Array.isArray(outcome?.removed) ? outcome.removed : [];
+  await Promise.all(removed.map(async (job) => {
+    if (typeof job?.message?.react !== 'function') return;
+    try {
+      await job.message.react('🗑️');
+    } catch {
+    }
+  }));
+}
+
 export function createTextCommandHandler({
   botProvider = null,
   enableConfigCmd = false,
@@ -123,6 +178,7 @@ export function createTextCommandHandler({
   applyProjectUpgrade = null,
   requestProjectUpgradeRestart = null,
   canManageProjectUpgrade = () => true,
+  canManageQueue = canManageProjectUpgrade,
   parseConfigKey,
   parseReasoningEffortInput,
   getEffectiveSecurityProfile,
@@ -144,6 +200,7 @@ export function createTextCommandHandler({
   setCodexThreadGoal,
   clearCodexThreadGoal,
   enqueuePrompt,
+  dequeuePrompt,
   resolveSecurityContext,
   openWorkspaceBrowser,
   resolvePath,
@@ -212,6 +269,29 @@ export function createTextCommandHandler({
 
       case 'queue': {
         await safeReply(message, formatQueueReport(key, session, message.channel));
+        break;
+      }
+
+      case 'dequeue': {
+        const parsed = parseDequeueTextInput(arg, message);
+        if (!parsed.ok) {
+          await safeReply(message, formatDequeueOutcome(parsed));
+          break;
+        }
+        if (typeof dequeuePrompt !== 'function') {
+          await safeReply(message, formatDequeueOutcome({ ok: false, reason: 'unavailable' }));
+          break;
+        }
+        const isManager = Boolean(canManageQueue(message.author?.id, message));
+        const outcome = dequeuePrompt(key, {
+          requesterUserId: message.author?.id,
+          selector: parsed.selector,
+          isManager,
+        });
+        if (outcome?.ok) {
+          await reactDequeuedMessages(outcome);
+        }
+        await safeReply(message, formatDequeueOutcome({ ...outcome, selector: parsed.selector }));
         break;
       }
 

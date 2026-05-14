@@ -660,11 +660,21 @@ export function createReportFormatters({
       maxSteps: 3,
     });
     const processLines = renderProcessContentLines(runtime.recentActivities, 'en', progressProcessLines);
+    const queuedPromptLines = Array.isArray(runtime.queuedPrompts)
+      ? runtime.queuedPrompts.slice(0, 8).map((item) => [
+        `• #${item.index}`,
+        item.authorId ? `<@${item.authorId}>` : null,
+        item.messageId ? `msg:${item.messageId}` : null,
+        item.promptPreview ? `— ${item.promptPreview}` : null,
+      ].filter(Boolean).join(' '))
+      : [];
     return [
       '📮 **任务队列状态**',
       `• runtime: ${formatRuntimeLabel(runtime)}`,
       `• queued prompts: ${runtime.queued}`,
       `• queue limit: ${formatQueueLimit(security.maxQueuePerChannel)}`,
+      queuedPromptLines.length ? '• queued items:' : null,
+      ...queuedPromptLines,
       runtime.progressText ? `• latest activity: ${runtime.progressText}` : null,
       ...processLines,
       planSummary ? `• plan: ${planSummary}` : null,
@@ -1153,6 +1163,7 @@ export function createReportFormatters({
         `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — channel security profile`,
         `• \`${slashRef('timeout')} <ms|off|status>\` / \`!timeout <...>\` — runner timeout`,
         `• \`${slashRef('progress')}\` / \`!progress\` — current run progress`,
+        '• `!dq [index|all]` — remove queued prompt(s) without interrupting the running task; reply to a queued message with `!dq` to remove that item',
         `• \`${slashRef('cancel')}\` / \`${slashRef('abort')}\` / \`!cancel\` / \`!c\` / \`!abort\` / \`!stop\` — stop running task and clear queue`,
         `• \`${slashRef('new')}\` / \`!new\` — switch to a fresh session but keep channel settings`,
         `• \`${slashRef('reset')}\` / \`!reset\` — clear session context and extra config overrides`,
@@ -1212,6 +1223,7 @@ export function createReportFormatters({
       `• \`${slashRef('profile')} <auto|solo|team|public|status>\` / \`!profile <...|status>\` — 当前频道 security profile`,
       `• \`${slashRef('timeout')} <毫秒|off|status>\` / \`!timeout <...>\` — runner 超时`,
       `• \`${slashRef('progress')}\` / \`!progress\` — 查看当前任务的最新进度`,
+      '• `!dq [序号|all]` — 只撤回排队消息，不中断当前任务；回复原排队消息发送 `!dq` 可撤回指定项',
       `• \`${slashRef('cancel')}\` / \`${slashRef('abort')}\` / \`!cancel\` / \`!c\` / \`!abort\` / \`!stop\` — 中断当前任务并清空队列`,
       `• \`${slashRef('new')}\` / \`!new\` — 切到新会话，但保留当前频道配置`,
       `• \`${slashRef('reset')}\` / \`!reset\` — 清空会话与额外配置，下条消息新开上下文`,

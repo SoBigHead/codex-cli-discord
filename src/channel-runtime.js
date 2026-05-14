@@ -80,9 +80,19 @@ export function createChannelRuntimeStore({
   function getRuntimeSnapshot(key) {
     const state = getChannelState(key);
     const active = state.activeRun;
+    const queuedPrompts = state.queue.map((job, index) => ({
+      index: index + 1,
+      id: job.id || null,
+      authorId: job.authorId || job.message?.author?.id || null,
+      messageId: job.messageId || job.message?.id || null,
+      channelId: job.channelId || job.message?.channel?.id || null,
+      enqueuedAt: job.enqueuedAt || null,
+      promptPreview: truncate(String(job.content || '').replace(/\s+/g, ' '), promptPreviewChars),
+    }));
     return {
       running: Boolean(state.running || active),
       queued: state.queue.length,
+      queuedPrompts,
       activeSinceMs: active ? Math.max(0, Date.now() - active.startedAt) : null,
       phase: active?.phase || null,
       pid: active?.child?.pid ?? null,

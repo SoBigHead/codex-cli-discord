@@ -49,6 +49,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
     cancelAllChannelWork: () => 'cancel-all',
     cancelChannelWork: () => 'cancel-one',
     enqueuePrompt: () => 'queued',
+    dequeuePrompt: () => 'dequeued',
     retryLastPrompt: () => 'retried',
     getRuntimeSnapshot: () => ({ running: false }),
     formatCompletedStepsSummary: () => 'steps',
@@ -265,6 +266,7 @@ test('createAppContext wires factories and cross-links composition dependencies'
   assert.equal(calls.commandSurface.slashRouterOptions.retryLastPrompt, promptRuntime.retryLastPrompt);
   assert.equal(calls.commandSurface.textCommandOptions.cancelChannelWork, promptRuntime.cancelChannelWork);
   assert.equal(calls.commandSurface.textCommandOptions.enqueuePrompt, promptRuntime.enqueuePrompt);
+  assert.equal(calls.commandSurface.textCommandOptions.dequeuePrompt, promptRuntime.dequeuePrompt);
   assert.equal(calls.commandSurface.textCommandOptions.getRuntimeSnapshot, promptRuntime.getRuntimeSnapshot);
   assert.equal(calls.commandSurface.textCommandOptions.resolveSecurityContext, securityPolicy.resolveSecurityContext);
   assert.equal(calls.entryHandlers.enqueuePrompt, promptRuntime.enqueuePrompt);

@@ -312,6 +312,7 @@ export function createAppContext({
       describeConfigPolicy: securityPolicy.describeConfigPolicy,
       isConfigKeyAllowed: securityPolicy.isConfigKeyAllowed,
       enqueuePrompt: promptRuntime.enqueuePrompt,
+      dequeuePrompt: promptRuntime.dequeuePrompt,
       resolveSecurityContext: securityPolicy.resolveSecurityContext,
       getRuntimeSnapshot: promptRuntime.getRuntimeSnapshot,
       cancelChannelWork: promptRuntime.cancelChannelWork,

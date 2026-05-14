@@ -59,6 +59,7 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
   };
   const channelQueue = {
     enqueuePrompt: () => 'queued-prompt',
+    dequeuePrompt: () => 'dequeued-prompt',
     retryLastPrompt: () => 'retried-prompt',
   };
   const createProgressReporter = () => ({
@@ -138,6 +139,7 @@ test('createPromptRuntime wires presentation runtime runner orchestrator and que
   assert.deepEqual(runnerCalls, [{ prompt: 'demo' }]);
 
   assert.equal(runtime.enqueuePrompt, channelQueue.enqueuePrompt);
+  assert.equal(runtime.dequeuePrompt, channelQueue.dequeuePrompt);
   assert.equal(runtime.retryLastPrompt, channelQueue.retryLastPrompt);
   assert.equal(runtime.getRuntimeSnapshot, channelRuntimeStore.getRuntimeSnapshot);
   assert.equal(runtime.cancelChannelWork, channelRuntimeStore.cancelChannelWork);

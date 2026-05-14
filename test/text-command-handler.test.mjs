@@ -124,6 +124,115 @@ test('createTextCommandHandler switches to a fresh session without retry hint', 
   assert.deepEqual(replies, ['🆕 已切换到新会话。\n下一条普通消息会开启新的上下文。']);
 });
 
+test('createTextCommandHandler dequeues queued prompts without cancelling running work', async () => {
+  const replies = [];
+  const dequeues = [];
+  const session = { provider: 'codex' };
+  let cancelCalls = 0;
+  const removedMessage = {
+    id: 'queued-message-1',
+    reacted: [],
+    async react(emoji) {
+      this.reacted.push(emoji);
+    },
+  };
+  const handleCommand = createTextCommandHandler({
+    getSession: () => session,
+    cancelChannelWork: () => {
+      cancelCalls += 1;
+      return { cancelledRunning: true, clearedQueued: 99 };
+    },
+    canManageQueue: () => false,
+    dequeuePrompt: (key, options) => {
+      dequeues.push({ key, options });
+      return {
+        ok: true,
+        removedCount: 1,
+        remainingQueued: 1,
+        removed: [{ message: removedMessage, content: 'queued task' }],
+      };
+    },
+    safeReply: async (_message, payload) => replies.push(payload),
+  });
+
+  await handleCommand(createMessage({ author: { id: 'user-1' } }), 'thread-1', '!dq');
+
+  assert.equal(cancelCalls, 0);
+  assert.deepEqual(dequeues, [{
+    key: 'thread-1',
+    options: {
+      requesterUserId: 'user-1',
+      selector: { type: 'last' },
+      isManager: false,
+    },
+  }]);
+  assert.deepEqual(removedMessage.reacted, ['🗑️']);
+  assert.match(replies[0], /已撤回 1 条排队消息/);
+});
+
+test('createTextCommandHandler supports dequeue by index reply and admin all', async () => {
+  const replies = [];
+  const calls = [];
+  const handleCommand = createTextCommandHandler({
+    getSession: () => ({ provider: 'codex' }),
+    canManageQueue: (userId) => userId === 'admin-user',
+    dequeuePrompt: (key, options) => {
+      calls.push({ key, options });
+      return {
+        ok: true,
+        removedCount: options.selector.type === 'all' ? 3 : 1,
+        remainingQueued: 0,
+        removed: [],
+      };
+    },
+    safeReply: async (_message, payload) => replies.push(payload),
+  });
+
+  await handleCommand(createMessage({ author: { id: 'user-1' } }), 'thread-1', '!dq 2');
+  await handleCommand(createMessage({
+    author: { id: 'user-1' },
+    reference: { messageId: 'queued-message-9' },
+  }), 'thread-1', '!dq');
+  await handleCommand(createMessage({ author: { id: 'admin-user' } }), 'thread-1', '!dq all');
+
+  assert.deepEqual(calls.map((call) => call.options.selector), [
+    { type: 'index', index: 2 },
+    { type: 'message', messageId: 'queued-message-9' },
+    { type: 'all' },
+  ]);
+  assert.equal(calls[2].options.isManager, true);
+  assert.match(replies[2], /已清空 3 条排队消息/);
+});
+
+test('createTextCommandHandler reports dequeue permission and started-task failures', async () => {
+  const replies = [];
+  const outcomes = [
+    { ok: false, reason: 'forbidden', removedCount: 0 },
+    { ok: false, reason: 'forbidden_all', removedCount: 0 },
+    { ok: false, reason: 'already_started', removedCount: 0 },
+    { ok: false, reason: 'not_found', removedCount: 0 },
+  ];
+  const handleCommand = createTextCommandHandler({
+    getSession: () => ({ provider: 'codex' }),
+    canManageQueue: () => false,
+    dequeuePrompt: () => outcomes.shift(),
+    safeReply: async (_message, payload) => replies.push(payload),
+  });
+
+  await handleCommand(createMessage({ author: { id: 'user-1' } }), 'thread-1', '!dq 1');
+  await handleCommand(createMessage({ author: { id: 'user-1' } }), 'thread-1', '!dq all');
+  await handleCommand(createMessage({
+    author: { id: 'user-1' },
+    reference: { messageId: 'running-message' },
+  }), 'thread-1', '!dq');
+  await handleCommand(createMessage({ author: { id: 'user-1' } }), 'thread-1', '!dq');
+
+  assert.match(replies[0], /只能撤回你自己的排队消息/);
+  assert.match(replies[1], /只有管理员可以使用 `!dq all`/);
+  assert.match(replies[2], /已经开始执行/);
+  assert.match(replies[3], /没有找到你可撤回的排队消息/);
+});
+
 test('createTextCommandHandler rejects only unsupported compact actions for non-native providers', async () => {
   const replies = [];
   const session = { provider: 'gemini' };
