@@ -53,7 +53,7 @@ test('createProviderDefaultWorkspaceStore resolves provider overrides before sha
     providerDefaultWorkspaceOverrides: {
       codex: '/workspace/codex',
       claude: null,
-      gemini: null,
+      antigravity: null,
     },
   });
 
@@ -86,17 +86,17 @@ test('createProviderDefaultWorkspaceStore.set updates env and persists provider-
     },
   });
 
-  const next = store.set('gemini', '/workspace/gemini');
+  const next = store.set('antigravity', '/workspace/antigravity');
 
   assert.deepEqual(next, {
-    provider: 'gemini',
-    workspaceDir: '/workspace/gemini',
+    provider: 'antigravity',
+    workspaceDir: '/workspace/antigravity',
     source: 'provider-scoped env',
-    envKey: 'GEMINI__DEFAULT_WORKSPACE_DIR',
+    envKey: 'ANTIGRAVITY__DEFAULT_WORKSPACE_DIR',
   });
-  assert.equal(env.GEMINI__DEFAULT_WORKSPACE_DIR, '/workspace/gemini');
+  assert.equal(env.ANTIGRAVITY__DEFAULT_WORKSPACE_DIR, '/workspace/antigravity');
   const content = fs.readFileSync(envFilePath, 'utf8');
-  assert.match(content, /^GEMINI__DEFAULT_WORKSPACE_DIR=\/workspace\/gemini$/m);
+  assert.match(content, /^ANTIGRAVITY__DEFAULT_WORKSPACE_DIR=\/workspace\/antigravity$/m);
 });
 
 test('createChildThreadWorkspaceModeStore resolves provider override before shared mode', () => {
@@ -130,15 +130,15 @@ test('createChildThreadWorkspaceModeStore.set persists provider-scoped mode', ()
     envFilePath,
   });
 
-  const next = store.set('gemini', 'separate');
+  const next = store.set('antigravity', 'separate');
 
   assert.deepEqual(next, {
-    provider: 'gemini',
+    provider: 'antigravity',
     mode: 'separate',
     source: 'provider-scoped env',
-    envKey: 'GEMINI__CHILD_THREAD_WORKSPACE_MODE',
+    envKey: 'ANTIGRAVITY__CHILD_THREAD_WORKSPACE_MODE',
   });
-  assert.equal(env.GEMINI__CHILD_THREAD_WORKSPACE_MODE, 'separate');
+  assert.equal(env.ANTIGRAVITY__CHILD_THREAD_WORKSPACE_MODE, 'separate');
   const content = fs.readFileSync(envFilePath, 'utf8');
-  assert.match(content, /^GEMINI__CHILD_THREAD_WORKSPACE_MODE=separate$/m);
+  assert.match(content, /^ANTIGRAVITY__CHILD_THREAD_WORKSPACE_MODE=separate$/m);
 });

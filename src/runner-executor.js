@@ -33,6 +33,7 @@ export function createRunnerExecutor({
   resolveCompactEnabledSetting,
   resolveNativeCompactTokenLimitSetting,
   resolveRuntimeModeSetting = () => ({ mode: 'normal', supported: false, source: 'provider unsupported' }),
+  applyProviderModelSetting = async () => {},
   normalizeTimeoutMs,
   safeError,
   stopChildProcess,
@@ -154,6 +155,15 @@ export function createRunnerExecutor({
       });
     }
 
+    const normalizedProvider = normalizeProvider(provider);
+    if (normalizedProvider === 'antigravity') {
+      const modelSetting = resolveModelSetting(session);
+      const modelValue = String(modelSetting?.value || '').trim();
+      if (modelValue && modelSetting?.source !== 'settings.json') {
+        await applyProviderModelSetting({ provider: normalizedProvider, session, modelSetting });
+      }
+    }
+
     const args = buildSessionRunnerArgs({
       provider,
       session,
@@ -235,6 +245,7 @@ export function createRunnerExecutor({
         env: spawnEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      const startedAtMs = Date.now();
       options.onSpawn?.(child);
 
       let stdoutBuf = '';
@@ -400,6 +411,10 @@ export function createRunnerExecutor({
           }
         }
 
+        if (normalizeProvider(provider) === 'antigravity' && source === 'stdout') {
+          meta.geminiDeltaBuffer = `${meta.geminiDeltaBuffer || ''}${meta.geminiDeltaBuffer ? '\n' : ''}${trimmed}`;
+          return;
+        }
         if (provider === 'codex' && trimmed.includes('state db missing rollout path for thread')) return;
         if (source === 'stderr' || debugEvents) logs.push(trimmed);
         options.onLog?.(trimmed, source);
@@ -475,11 +490,15 @@ export function createRunnerExecutor({
 
       child.on('close', (code, signal) => {
         flushRemainders();
-        if (normalizeProvider(provider) === 'gemini') {
+        if (normalizeProvider(provider) === 'antigravity') {
           const sessionState = readGeminiSessionState({
             sessionId: threadId,
             workspaceDir,
+            notOlderThanMs: startedAtMs - 1000,
           });
+          if (!threadId && sessionState?.sessionId) {
+            threadId = sessionState.sessionId;
+          }
           if (sessionState?.usage) {
             usage = sessionState.usage;
           }

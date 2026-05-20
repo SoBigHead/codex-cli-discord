@@ -104,7 +104,7 @@ export function createSyntheticForkMessage(source, childThread) {
 function formatForkProviderLabel(provider) {
   const normalizedProvider = normalizeForkProvider(provider);
   if (normalizedProvider === 'claude') return 'Claude';
-  if (normalizedProvider === 'gemini') return 'Gemini';
+  if (normalizedProvider === 'antigravity') return 'Antigravity';
   return 'Codex';
 }
 

@@ -7,8 +7,8 @@ export function listRecentSessions({ provider = 'codex', workspaceDir = '', limi
   switch (normalizeProvider(provider)) {
     case 'claude':
       return listRecentClaudeSessions(limit, workspaceDir);
-    case 'gemini':
-      return listRecentGeminiSessions(limit, workspaceDir);
+    case 'antigravity':
+      return listRecentAntigravitySessions(limit, workspaceDir);
     default:
       return listRecentCodexSessions(limit);
   }
@@ -64,7 +64,15 @@ function listRecentClaudeSessions(limit = 10, workspaceDir = '') {
     .slice(0, limit);
 }
 
-function listRecentGeminiSessions(limit = 10, workspaceDir = '') {
+function listRecentAntigravitySessions(limit = 10, workspaceDir = '') {
+  const antigravityConversation = readAntigravityLastConversation(workspaceDir);
+  if (antigravityConversation?.id) {
+    return [{
+      id: antigravityConversation.id,
+      mtime: antigravityConversation.mtime,
+    }];
+  }
+
   const roots = getGeminiSearchRoots(workspaceDir);
   if (!roots.length) return [];
 
@@ -369,7 +377,12 @@ function findLatestGeminiSessionFileBySessionId(sessionId, workspaceDir = '', no
   return latest;
 }
 
-export function resolveGeminiProjectRootBySessionId(sessionId, workspaceDir = '', notOlderThanMs = 0) {
+export function resolveAntigravityProjectRootBySessionId(sessionId, workspaceDir = '', notOlderThanMs = 0) {
+  const antigravityConversation = readAntigravityLastConversation(workspaceDir);
+  if (antigravityConversation?.id && antigravityConversation.id === String(sessionId || '').trim()) {
+    return path.resolve(workspaceDir);
+  }
+
   const match = findLatestGeminiSessionFileBySessionId(sessionId, workspaceDir, notOlderThanMs);
   if (!match?.file) return null;
   const projectDir = path.dirname(path.dirname(match.file));
@@ -394,6 +407,42 @@ function getGeminiTmpDir() {
   const root = getGeminiRootDir();
   if (!root) return '';
   return path.join(root, 'tmp');
+}
+
+function getAntigravityCliDir() {
+  const root = getGeminiRootDir();
+  if (!root) return '';
+  return path.join(root, 'antigravity-cli');
+}
+
+function readAntigravityLastConversation(workspaceDir = '', notOlderThanMs = 0) {
+  const rawWorkspace = String(workspaceDir || '').trim();
+  if (!rawWorkspace) return null;
+
+  const cliDir = getAntigravityCliDir();
+  if (!cliDir) return null;
+
+  const file = path.join(cliDir, 'cache', 'last_conversations.json');
+  const parsed = readJsonFile(file);
+  if (!parsed || typeof parsed !== 'object') return null;
+
+  const normalizedWorkspace = path.resolve(rawWorkspace);
+  const directId = String(parsed[normalizedWorkspace] || parsed[rawWorkspace] || '').trim();
+  if (!directId) return null;
+
+  let mtime = Date.now();
+  try {
+    const stat = fs.statSync(file);
+    if (stat?.isFile()) mtime = stat.mtimeMs;
+  } catch {
+  }
+  if (notOlderThanMs > 0 && mtime < notOlderThanMs) return null;
+
+  return {
+    id: directId,
+    mtime,
+    file,
+  };
 }
 
 function getClaudeProjectsDir() {
@@ -637,7 +686,18 @@ function readGeminiSessionFile(filePath) {
   return readJsonFile(filePath);
 }
 
-export function readGeminiSessionState({ sessionId, workspaceDir = '' } = {}) {
+export function readAntigravitySessionState({ sessionId, workspaceDir = '', notOlderThanMs = 0 } = {}) {
+  const antigravityConversation = readAntigravityLastConversation(workspaceDir, notOlderThanMs);
+  if (antigravityConversation?.id && (!sessionId || antigravityConversation.id === String(sessionId || '').trim())) {
+    return {
+      sessionId: antigravityConversation.id,
+      messages: [],
+      finalAnswer: '',
+      usage: null,
+      file: antigravityConversation.file,
+    };
+  }
+
   const match = findLatestGeminiSessionFileBySessionId(sessionId, workspaceDir);
   if (!match?.file) return null;
 
@@ -658,9 +718,13 @@ export function readGeminiSessionState({ sessionId, workspaceDir = '' } = {}) {
     : null;
 
   return {
+    sessionId: String(snapshot?.sessionId || sessionId || '').trim() || null,
     messages,
     finalAnswer,
     usage: lastAssistant?.tokens && typeof lastAssistant.tokens === 'object' ? lastAssistant.tokens : null,
     file: match.file,
   };
 }
+
+export const resolveGeminiProjectRootBySessionId = resolveAntigravityProjectRootBySessionId;
+export const readGeminiSessionState = readAntigravitySessionState;

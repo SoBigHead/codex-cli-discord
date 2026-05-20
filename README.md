@@ -1,6 +1,6 @@
 # Agents in Discord
 
-在 Discord 线程里运行 Codex CLI、Claude Code 和 Gemini CLI 的 bot。
+在 Discord 线程里运行 Codex CLI、Claude Code 和 Antigravity CLI 的 bot。
 
 它是一个独立 bridge，不是 OpenClaw 插件，也不需要 OpenClaw。
 
@@ -12,7 +12,7 @@
 
 一个 Discord 频道或线程，对应一条 provider 会话。
 
-你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Gemini 拆成三个独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。
+你可以在同一个 Discord 服务器里使用共享 bot，也可以把 Codex、Claude、Antigravity 拆成三个独立 bot。每个 provider 有自己的 session、workspace、模型和运行配置，不会混在一起。Antigravity 的模型菜单会优先显示 `~/.gemini/antigravity-cli/settings.json` 当前模型，再补充 Antigravity 官方 reasoning model 列表和本机 CLI 日志里出现过的模型；面板里选中的模型会在下一次启动前写回 Antigravity 设置。
 
 长任务不会一直刷屏。bot 会更新进度卡，也可以按频道设置成持续发送过程消息。最终回复是否 @ 发起人，也可以在设置里选。
 
@@ -32,12 +32,12 @@ Codex 的安全模式现在使用 workspace-write 沙盒，并把需要审批的
 
 需要 Node.js 18+，一个 Discord Bot Token，以及你要使用的 CLI。
 
-本项目不管理 Codex、Claude、Gemini 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
+本项目不管理 Codex、Claude、Antigravity 自己的登录状态。请先在本机 CLI 里完成登录，并确认命令能直接运行。
 
 ```bash
 codex --version
 claude --version
-gemini --version
+agy --version
 ```
 
 如果 CLI 不在 bot 进程的 PATH 里，可以在 `.env` 里写绝对路径。
@@ -45,7 +45,7 @@ gemini --version
 ```env
 CODEX_BIN=/opt/homebrew/bin/codex
 CLAUDE_BIN=/opt/homebrew/bin/claude
-GEMINI_BIN=/opt/homebrew/bin/gemini
+ANTIGRAVITY_BIN=/opt/homebrew/bin/agy
 ```
 
 ## 安装
@@ -63,7 +63,7 @@ npm start
 
 ## Discord 里怎么用
 
-默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude bot 默认是 `cc_`，独立 Gemini bot 默认是 `gm_`。
+默认 shared bot 的 slash 前缀是 `cx_`。独立 Claude bot 默认是 `cc_`，独立 Antigravity bot 默认是 `ag_`。旧的 `gm_` 仍可通过 legacy Gemini 启动方式继续使用。
 
 最常用的入口是这些。
 
@@ -115,10 +115,10 @@ npm start
 ```bash
 npm run start:codex
 npm run start:claude
-npm run start:gemini
+npm run start:antigravity
 ```
 
-分组配置使用 `CODEX__*`、`CLAUDE__*`、`GEMINI__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。
+分组配置使用 `CODEX__*`、`CLAUDE__*`、`ANTIGRAVITY__*`。通常只需要各自的 `DISCORD_TOKEN`，再按需填默认模型、默认 workspace 和 CLI 路径。Antigravity CLI 目前没有公开的 `--model` 参数，模型选择以 Antigravity 自己的 settings.json 为准；模型菜单会合并 settings 当前值、官方 documented reasoning models 和本机日志里观测到的模型。旧的 `GEMINI__*` 和 `npm run start:gemini` 仍作为兼容入口保留。
 
 ## 关键配置
 
@@ -145,9 +145,9 @@ CLAUDE__DISCORD_TOKEN=...
 CLAUDE__DEFAULT_WORKSPACE_DIR=/Users/you/claude-work
 CLAUDE__SLASH_PREFIX=cc
 
-GEMINI__DISCORD_TOKEN=...
-GEMINI__DEFAULT_WORKSPACE_DIR=/Users/you/gemini-work
-GEMINI__SLASH_PREFIX=gm
+ANTIGRAVITY__DISCORD_TOKEN=...
+ANTIGRAVITY__DEFAULT_WORKSPACE_DIR=/Users/you/antigravity-work
+ANTIGRAVITY__SLASH_PREFIX=ag
 ```
 
 访问控制建议至少设置 `ALLOWED_CHANNEL_IDS` 或 `ALLOWED_USER_IDS`。多人服务器里不要默认使用 dangerous mode。
@@ -178,7 +178,7 @@ macOS 上推荐用仓库自带脚本重启 bot 服务。
 ```bash
 scripts/restart-discord-bot-service.sh codex
 scripts/restart-discord-bot-service.sh claude
-scripts/restart-discord-bot-service.sh gemini
+scripts/restart-discord-bot-service.sh antigravity
 scripts/restart-discord-bot-service.sh all
 ```
 
@@ -255,7 +255,7 @@ npm run release:major
 ```bash
 which codex
 which claude
-which gemini
+which agy
 ```
 
 然后把绝对路径写进 `.env`，重启 bot。

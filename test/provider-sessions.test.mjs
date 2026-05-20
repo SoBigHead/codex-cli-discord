@@ -70,6 +70,41 @@ test('provider-sessions reads gemini session state from project-scoped files', (
   }
 });
 
+test('provider-sessions reads Antigravity conversation id from workspace cache', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-antigravity-'));
+  const workspaceDir = path.join(root, 'workspace');
+  fs.mkdirSync(path.join(root, '.gemini', 'antigravity-cli', 'cache'), { recursive: true });
+  fs.mkdirSync(workspaceDir, { recursive: true });
+
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
+
+  try {
+    const conversationId = 'b349594e-8cc8-4604-9443-cfbe6479fe51';
+    fs.writeFileSync(path.join(root, '.gemini', 'antigravity-cli', 'cache', 'last_conversations.json'), JSON.stringify({
+      [path.resolve(workspaceDir)]: conversationId,
+    }, null, 2));
+
+    const recent = listRecentSessions({ provider: 'gemini', workspaceDir, limit: 5 });
+    const sessionState = readGeminiSessionState({ workspaceDir });
+    const staleSessionState = readGeminiSessionState({ workspaceDir, notOlderThanMs: Date.now() + 60_000 });
+    const resolved = resolveGeminiProjectRootBySessionId(conversationId, workspaceDir);
+
+    assert.equal(recent.length, 1);
+    assert.equal(recent[0].id, conversationId);
+    assert.equal(sessionState.sessionId, conversationId);
+    assert.equal(staleSessionState, null);
+    assert.equal(sessionState.finalAnswer, '');
+    assert.equal(resolved, path.resolve(workspaceDir));
+  } finally {
+    if (previousHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = previousHome;
+    }
+  }
+});
+
 test('provider-sessions builds a local Claude rescue summary when the session is over context', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'agents-in-discord-claude-rescue-'));
   const workspaceDir = path.join(root, 'workspace');

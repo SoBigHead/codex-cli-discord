@@ -241,10 +241,10 @@ test('createTextCommandHandler rejects only unsupported compact actions for non-
     getSession: () => session,
     getSessionProvider: (currentSession) => currentSession.provider,
     getSessionLanguage: () => 'zh',
-    getProviderDisplayName: (provider) => provider === 'gemini' ? 'Gemini CLI' : provider,
+    getProviderDisplayName: (provider) => provider === 'gemini' ? 'Antigravity CLI' : provider,
     parseCompactConfigFromText: () => ({ type: 'set_strategy', strategy: 'native' }),
     providerSupportsCompactConfigAction: () => false,
-    formatCompactConfigUnsupported: () => '⚠️ 当前 provider Gemini CLI 不支持 `native` 压缩。',
+    formatCompactConfigUnsupported: () => '⚠️ 当前 provider Antigravity CLI 不支持 `native` 压缩。',
     safeReply: async (_message, payload) => {
       replies.push(payload);
     },
@@ -252,7 +252,7 @@ test('createTextCommandHandler rejects only unsupported compact actions for non-
 
   await handleCommand(createMessage(), 'thread-1', '!compact strategy native');
 
-  assert.deepEqual(replies, ['⚠️ 当前 provider Gemini CLI 不支持 `native` 压缩。']);
+  assert.deepEqual(replies, ['⚠️ 当前 provider Antigravity CLI 不支持 `native` 压缩。']);
 });
 
 test('createTextCommandHandler shows compact help for removed manual continue subcommand', async () => {
@@ -300,12 +300,12 @@ test('createTextCommandHandler explains provider-specific raw config surface whe
 
 test('createTextCommandHandler shows current provider-native resume alias', async () => {
   const replies = [];
-  const session = { provider: 'gemini', language: 'zh' };
+  const session = { provider: 'antigravity', language: 'zh' };
 
   const handleCommand = createTextCommandHandler({
     getSession: () => session,
     getSessionProvider: (currentSession) => currentSession.provider,
-    formatProviderSessionLabel: (_provider, _language, { plural } = {}) => (plural ? 'Gemini chat sessions' : 'Gemini chat session'),
+    formatProviderSessionLabel: (_provider, _language, { plural } = {}) => (plural ? 'Antigravity conversations' : 'Antigravity conversation'),
     safeReply: async (_message, payload) => {
       replies.push(payload);
     },
@@ -313,8 +313,8 @@ test('createTextCommandHandler shows current provider-native resume alias', asyn
 
   await handleCommand(createMessage(), 'thread-1', '!resume');
 
-  assert.match(replies[0], /!chat_resume <session-id>/);
-  assert.match(replies[0], /!chat_sessions/);
+  assert.match(replies[0], /!conversation_resume <session-id>/);
+  assert.match(replies[0], /!conversation_sessions/);
   assert.doesNotMatch(replies[0], /!project_resume/);
 });
 

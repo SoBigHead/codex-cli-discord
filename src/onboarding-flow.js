@@ -1,4 +1,4 @@
-const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'gemini']);
+const PROVIDER_CHOICES = Object.freeze(['codex', 'claude', 'antigravity']);
 
 function formatWorkspaceSourceLabel(source, language) {
   const value = String(source || '').trim().toLowerCase();
@@ -483,7 +483,9 @@ export function createOnboardingFlow({
     }
 
     if (parsed.action === 'set_provider' && !botProvider) {
-      const provider = PROVIDER_CHOICES.includes(parsed.value) ? parsed.value : null;
+      const provider = PROVIDER_CHOICES.includes(parsed.value)
+        ? parsed.value
+        : (parsed.value === 'gemini' || parsed.value === 'google' || parsed.value === 'agy' ? 'antigravity' : null);
       if (provider) {
         if (typeof commandActions.setProvider === 'function') {
           commandActions.setProvider(session, provider);

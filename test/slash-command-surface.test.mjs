@@ -142,7 +142,7 @@ test('buildSlashCommands exposes browse keyword in workspace option descriptions
   assert.match(setdefaultdir.options[0].description, /browse/);
 });
 
-test('buildSlashCommands exposes gemini as provider choice', () => {
+test('buildSlashCommands exposes antigravity as provider choice', () => {
   const commands = buildSlashCommands({
     SlashCommandBuilder: MockSlashCommandBuilder,
     slashPrefix: 'cx',
@@ -152,7 +152,7 @@ test('buildSlashCommands exposes gemini as provider choice', () => {
   const provider = commands.find((command) => command.name === 'cx_provider');
   const choices = provider.options[0].choices.map((choice) => choice.value);
 
-  assert.deepEqual(choices, ['codex', 'claude', 'gemini', 'status']);
+  assert.deepEqual(choices, ['codex', 'claude', 'antigravity', 'status']);
 });
 
 test('buildSlashCommands lets model open panel or set effort', () => {
@@ -203,8 +203,8 @@ test('buildSlashCommands narrows locked-provider surfaces to native aliases and 
   assert.ok(!names.includes('gm_project_sessions'));
   assert.ok(names.includes('gm_chat_resume'));
   assert.ok(!names.includes('gm_rollout_resume'));
-  assert.equal(sessions.description, '列出最近的 chat sessions');
-  assert.equal(resume.description, '继承一个已有的 chat session');
+  assert.equal(sessions.description, '列出最近的 conversations');
+  assert.equal(resume.description, '继承一个已有的 conversation');
   assert.deepEqual(compact.options[0].choices.map((choice) => choice.value), [
     'status',
     'run',

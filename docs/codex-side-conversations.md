@@ -52,7 +52,7 @@ Even when the parent is idle, the side conversation must stay attached to the pa
 
 If the parent is running in exec runtime, side start must fail closed with a clear message. Exec has no live app-server handle for the active turn, so pretending to open side would be misleading.
 
-If the current provider is Claude or Gemini, side start must fail closed. This spec covers Codex CLI `/side` semantics only.
+If the current provider is Claude or Antigravity, side start must fail closed. This spec covers Codex CLI `/side` semantics only.
 
 ## Protocol Requirements
 
@@ -114,7 +114,7 @@ Do not implement generic multi-agent delegation under the name side.
 
 Do not make side an alias for durable `/fork`.
 
-Do not support Claude/Gemini side until their providers have equivalent native semantics.
+Do not support Claude/Antigravity side until their providers have equivalent native semantics.
 
 Do not allow nested side conversations in the first version.
 
@@ -131,7 +131,7 @@ Each row must be covered by automated tests or a documented manual verification 
 | Start side from running Codex long thread | Parent has an active long-runtime turn | Bot opens side without queueing behind the parent, parent progress card and active turn keep running, and side prompts fail closed until the parent turn is idle |
 | Start side from Codex exec running thread | Parent active runtime is exec | Bot refuses with a clear unsupported-runtime message and creates no side metadata |
 | Start side before first Codex user turn | No persisted parent Codex thread id exists | Bot refuses with the equivalent of "send a message first, then try side again" |
-| Start side on Claude/Gemini | Provider is not Codex | Bot refuses and does not create Discord or provider state |
+| Start side on Claude/Antigravity | Provider is not Codex | Bot refuses and does not create Discord or provider state |
 | Start nested side | Current Discord thread is already a side thread | Bot refuses and points to closing or returning to the parent first |
 | Duplicate open side | Parent already has an open side | Bot refuses or returns the existing side link; it must not create a second hidden side by accident |
 | Fork succeeds but boundary injection fails | Mock `thread/inject_items` failure | Bot interrupts/unsubscribes the side fork, marks no usable side session, and reports the preparation failure |
@@ -182,7 +182,7 @@ Run against a real Codex bot after tests pass:
 - Confirm the parent thread gets no side answer and its session/status remain unchanged.
 - While a parent task is running, start side and confirm side prompts fail closed until the parent is idle.
 - Close side and confirm no further side messages are accepted as an active provider session.
-- Try `/cx_side` from a Claude/Gemini thread and from an exec-running Codex thread and confirm both fail closed.
+- Try `/cx_side` from a Claude/Antigravity thread and from an exec-running Codex thread and confirm both fail closed.
 
 Manual verification is not a substitute for automated tests. It is the final integration check after automated coverage proves the edge cases.
 

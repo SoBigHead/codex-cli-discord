@@ -9,6 +9,7 @@ import {
   providerSupportsNativeCompact,
 } from './provider-metadata.js';
 import { buildCodexPermissionArgs } from './codex-permissions.js';
+import { buildCodexOpenAICuratedMarketplaceArgs } from './codex-marketplaces.js';
 
 export {
   normalizeCliProvider,
@@ -47,8 +48,8 @@ export function buildRunnerArgs({
       pendingForkFromSessionId,
     });
   }
-  if (normalizedProvider === 'gemini') {
-    return buildGeminiArgs({
+  if (normalizedProvider === 'antigravity') {
+    return buildAntigravityArgs({
       sessionId,
       prompt,
       mode,
@@ -84,7 +85,7 @@ function buildCodexArgs({
   compactOnThreshold,
   modelAutoCompactTokenLimit,
 }) {
-  const common = ['--enable', 'goals'];
+  const common = ['--enable', 'goals', ...buildCodexOpenAICuratedMarketplaceArgs()];
   if (model) common.push('-m', model);
   if (effort) common.push('-c', `model_reasoning_effort="${effort}"`);
   if (typeof fastMode === 'boolean') {
@@ -131,22 +132,20 @@ function buildClaudeArgs({
   return args;
 }
 
-function buildGeminiArgs({
+function buildAntigravityArgs({
   sessionId,
   prompt,
   mode,
-  model,
 }) {
-  const args = ['--output-format', 'stream-json'];
+  const args = [];
 
   if (mode === 'dangerous') {
-    args.push('--yolo');
+    args.push('--dangerously-skip-permissions');
   } else {
-    args.push('--sandbox', '--approval-mode', 'default');
+    args.push('--sandbox');
   }
 
-  if (model) args.push('--model', model);
-  if (sessionId) args.push('--resume', sessionId);
+  if (sessionId) args.push('--conversation', sessionId);
   args.push('--prompt', prompt);
   return args;
 }

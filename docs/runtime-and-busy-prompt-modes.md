@@ -14,7 +14,7 @@ Current capability matrix:
 | --- | --- | --- |
 | Codex | `exec` or `long` | `queue` |
 | Claude Code | `exec` or `long` | `queue` |
-| Gemini | `exec` | `queue` |
+| Antigravity | `exec` | `queue` |
 
 Target matrix after runner work:
 
@@ -22,7 +22,7 @@ Target matrix after runner work:
 | --- | --- | --- |
 | Codex | implemented with `codex app-server` | `turn/steer` with `expectedTurnId` |
 | Claude Code | stream-json hot process | realtime stream-json user input while a turn is active |
-| Gemini | not specified | queue only |
+| Antigravity | not specified | queue only |
 
 Codex 0.130 adds app-server pagination for thread turns through `thread/turns/list`, including an `itemsView` option (`notLoaded`, `summary`, `full`). Use that path for reading large Codex long-thread history instead of loading whole threads up front. The generated `thread/turns/items/list` protocol entry is not wired in the current 0.130 app-server build, so callers must not depend on it yet.
 

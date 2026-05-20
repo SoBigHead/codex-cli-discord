@@ -174,7 +174,7 @@ function createPanel({
     getProviderDisplayName: (provider) => ({
       codex: 'Codex CLI',
       claude: 'Claude Code',
-      gemini: 'Gemini CLI',
+      gemini: 'Antigravity CLI',
     }[provider] || provider),
     getSupportedReasoningEffortLevels: (provider) => provider === 'gemini' ? [] : (provider === 'claude' ? ['high', 'medium', 'low'] : ['xhigh', 'high', 'medium', 'low']),
     getModelCatalog: () => modelCatalog || {
@@ -395,6 +395,50 @@ test('createSettingsPanel updates fast mode through button interaction', async (
   assert.equal(updates.length, 1);
   assert.match(updates[0].content, /当前项：Fast Mode/);
   assert.match(updates[0].content, /fast mode：开启（当前频道）/);
+});
+
+test('createSettingsPanel shows Antigravity models from local catalog', () => {
+  const session = {
+    provider: 'gemini',
+    language: 'zh',
+    mode: 'safe',
+    inheritedModel: 'Claude Opus 4.6 (Thinking)',
+    modelSource: 'settings.json',
+  };
+  const panel = createPanel({
+    session,
+    modelCatalog: {
+      models: [
+        {
+          slug: 'Claude Opus 4.6 (Thinking)',
+          displayName: 'Claude Opus 4.6 (Thinking)',
+          description: 'Antigravity configured model from settings.json',
+        },
+        {
+          slug: 'Gemini 3.5 Flash (High)',
+          displayName: 'Gemini 3.5 Flash (High)',
+          description: 'Antigravity model observed in local CLI logs',
+        },
+      ],
+      error: null,
+    },
+  });
+
+  const payload = panel.openSettingsPanel({
+    key: 'thread-1',
+    session,
+    userId: '12345',
+    activeSection: 'model',
+  });
+
+  assert.match(payload.content, /Antigravity 设置/);
+  const select = payload.components[1].components[0];
+  assert.equal(select.data.placeholder, '当前模型：Claude Opus 4.6 (Thinking)');
+  assert.deepEqual(select.data.options.map((option) => option.value), [
+    'default',
+    'Claude Opus 4.6 (Thinking)',
+    'Gemini 3.5 Flash (High)',
+  ]);
 });
 
 test('createSettingsPanel updates reply delivery and shows effective source', async () => {

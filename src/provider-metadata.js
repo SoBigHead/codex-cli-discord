@@ -39,13 +39,13 @@ const PROVIDER_METADATA = Object.freeze({
       workspaceSessionPolicy: 'portable',
     }),
   }),
-  gemini: Object.freeze({
-    aliases: Object.freeze(['gemini', 'google']),
-    displayName: 'Gemini CLI',
-    shortName: 'Gemini',
-    defaultBin: 'gemini',
-    binEnvName: 'GEMINI_BIN',
-    defaultSlashPrefix: 'gm',
+  antigravity: Object.freeze({
+    aliases: Object.freeze(['antigravity', 'agy', 'gemini', 'google']),
+    displayName: 'Antigravity CLI',
+    shortName: 'Antigravity',
+    defaultBin: 'agy',
+    binEnvName: 'ANTIGRAVITY_BIN',
+    defaultSlashPrefix: 'ag',
     capabilities: Object.freeze({
       reasoningEffortLevels: Object.freeze([]),
       rawConfigOverrides: Object.freeze({

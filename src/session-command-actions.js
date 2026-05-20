@@ -135,7 +135,7 @@ export function createSessionCommandActions({
     if (provider === 'codex') {
       return normalizeWorkspacePath(readCodexSessionMetaBySessionId(normalizedSessionId)?.cwd);
     }
-    if (provider === 'gemini') {
+    if (provider === 'antigravity') {
       return normalizeWorkspacePath(resolveGeminiProjectRootBySessionId(normalizedSessionId));
     }
     return null;

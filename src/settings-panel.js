@@ -42,6 +42,7 @@ function formatSettingSourceLabel(source, language) {
     if (value === 'session override') return 'this channel';
     if (value === 'parent channel') return 'parent channel';
     if (value === 'config.toml') return 'global config';
+    if (value === 'settings.json') return 'Antigravity settings';
     if (value === 'built-in default') return 'built-in default';
     if (value === 'env default') return 'env default';
     if (value === 'provider') return 'provider default';
@@ -56,6 +57,7 @@ function formatSettingSourceLabel(source, language) {
   if (value === 'session override') return '当前频道';
   if (value === 'parent channel') return '父频道默认';
   if (value === 'config.toml') return '全局配置';
+  if (value === 'settings.json') return 'Antigravity 设置';
   if (value === 'built-in default') return '内建默认';
   if (value === 'env default') return '环境默认';
   if (value === 'provider') return 'provider 默认';
@@ -100,6 +102,11 @@ function formatValueLabel(value, fallback, language) {
 }
 
 function formatModelPlaceholder(provider, language) {
+  if (provider === 'antigravity') {
+    return language === 'en'
+      ? 'e.g. Claude Opus 4.6 (Thinking), Gemini 3.5 Flash (High), default'
+      : '例如 Claude Opus 4.6 (Thinking)、Gemini 3.5 Flash (High)、default';
+  }
   if (provider === 'claude') {
     return language === 'en'
       ? 'e.g. sonnet, opus, claude-sonnet-4-6, default'
@@ -498,7 +505,7 @@ export function createSettingsPanel({
         if (botProvider) return [];
         return [
           new ActionRowBuilder().addComponents(
-            ...['codex', 'claude', 'gemini'].map((provider) => new ButtonBuilder()
+            ...['codex', 'claude', 'antigravity'].map((provider) => new ButtonBuilder()
               .setCustomId(buildSettingsComponentId('set', 'provider', provider, userId))
               .setLabel(provider)
               .setStyle(snapshot.provider === provider ? ButtonStyle.Primary : ButtonStyle.Secondary)),
@@ -1317,7 +1324,7 @@ function formatOverviewSection(snapshot) {
         commandActions.setModel?.(session, selectedModel);
         closeRuntimeForKey(key);
       } else if (parsed.target === 'provider' && !botProvider) {
-        commandActions.setProvider?.(session, parsed.value);
+        commandActions.setProvider?.(session, parsed.value === 'gemini' ? 'antigravity' : parsed.value);
         closeRuntimeForKey(key);
       } else if (parsed.target === 'profile') {
         commandActions.setCodexProfile?.(session, parsed.value === 'follow' ? null : parsed.value);

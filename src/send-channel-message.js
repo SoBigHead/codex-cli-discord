@@ -1,13 +1,13 @@
 import fs from 'node:fs/promises';
 
-const PROVIDER_CHOICES = new Set(['shared', 'codex', 'claude', 'gemini']);
+const PROVIDER_CHOICES = new Set(['shared', 'codex', 'claude', 'antigravity', 'gemini', 'google', 'agy']);
 const CHANNEL_ID_RE = /^\d{15,25}$/;
 const DISCORD_MESSAGE_LIMIT = 2000;
 
 export function buildSendChannelMessageUsage() {
   return [
     'Usage:',
-    '  node scripts/send-channel-message.mjs --channel <channel-id> [--content "text" | --content-file <path> | --stdin] [--provider shared|codex|claude|gemini] [--json]',
+    '  node scripts/send-channel-message.mjs --channel <channel-id> [--content "text" | --content-file <path> | --stdin] [--provider shared|codex|claude|antigravity] [--json]',
     '',
     'Examples:',
     '  node scripts/send-channel-message.mjs --channel 123456789012345678 --content "Deploy finished."',

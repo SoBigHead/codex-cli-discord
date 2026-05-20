@@ -17,6 +17,8 @@ test('normalizeCommandName maps text and slash aliases to canonical names', () =
   assert.equal(normalizeCommandName('extrainfo'), 'extra_info');
   assert.equal(normalizeCommandName('defaultdir'), 'setdefaultdir');
   assert.equal(normalizeCommandName('project_sessions'), 'sessions');
+  assert.equal(normalizeCommandName('conversation_sessions'), 'sessions');
+  assert.equal(normalizeCommandName('conversation_resume'), 'resume');
   assert.equal(normalizeCommandName('chat_resume'), 'resume');
 });
 
@@ -26,7 +28,7 @@ test('getActionButtonCommandNames exposes canonical button-safe commands', () =>
 
 test('buildSlashCommandEntries includes aliases and provider toggle only in shared mode', () => {
   const sharedEntries = buildSlashCommandEntries({ botProvider: null });
-  const lockedEntries = buildSlashCommandEntries({ botProvider: 'gemini' });
+  const lockedEntries = buildSlashCommandEntries({ botProvider: 'antigravity' });
 
   const newEntry = sharedEntries.find((entry) => entry.name === 'new');
   const cancelEntry = sharedEntries.find((entry) => entry.name === 'cancel');
@@ -42,8 +44,8 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   assert.equal(Array.isArray(newEntry.aliases), false);
   assert.ok(settingsEntry);
   assert.deepEqual(cancelEntry.aliases, ['abort']);
-  assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'chat_sessions']);
-  assert.deepEqual(resumeEntry.aliases, ['rollout_resume', 'project_resume', 'chat_resume']);
+  assert.deepEqual(sessionsEntry.aliases, ['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions']);
+  assert.deepEqual(resumeEntry.aliases, ['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume']);
   assert.ok(fastEntry);
   assert.ok(runtimeEntry);
   assert.ok(forkEntry);
@@ -65,10 +67,10 @@ test('buildSlashCommandEntries includes aliases and provider toggle only in shar
   const lockedCompact = lockedEntries.find((entry) => entry.name === 'compact');
   const lockedEffort = lockedEntries.find((entry) => entry.name === 'effort');
 
-  assert.deepEqual(lockedSessions.aliases, ['chat_sessions']);
-  assert.equal(lockedSessions.description, '列出最近的 chat sessions');
-  assert.deepEqual(lockedResume.aliases, ['chat_resume']);
-  assert.equal(lockedResume.description, '继承一个已有的 chat session');
+  assert.deepEqual(lockedSessions.aliases, ['conversation_sessions', 'chat_sessions']);
+  assert.equal(lockedSessions.description, '列出最近的 conversations');
+  assert.deepEqual(lockedResume.aliases, ['conversation_resume', 'chat_resume']);
+  assert.equal(lockedResume.description, '继承一个已有的 conversation');
   assert.equal(lockedEffort, undefined);
   assert.deepEqual(
     lockedCompact.configure({

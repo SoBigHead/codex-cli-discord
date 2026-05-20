@@ -16,9 +16,9 @@ import {
 
 test('provider-runtime-surface formats provider-specific runtime vocabulary', () => {
   assert.match(formatRecentSessionsTitle('claude', 'en'), /Claude Project Sessions/);
-  assert.match(formatRecentSessionsLookup('gemini', 'en'), /~\/\.gemini\/tmp\/<project>\/chats/);
+  assert.match(formatRecentSessionsLookup('gemini', 'en'), /last_conversations\.json/);
   assert.equal(formatProviderSessionTerm('claude', 'en'), 'project session');
-  assert.equal(formatProviderSessionLabel('gemini', 'en'), 'Gemini chat session');
+  assert.equal(formatProviderSessionLabel('gemini', 'en'), 'Antigravity conversation');
   assert.match(formatProviderRuntimeSummary('codex', 'zh'), /native limit/);
   assert.match(formatProviderSessionStoreSurface('claude', 'zh'), /~\/\.claude\/projects\/<workspace>/);
   assert.match(formatProviderResumeSurface('gemini', 'zh'), /切换 workspace 时会重置/);

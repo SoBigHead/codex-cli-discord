@@ -23,19 +23,19 @@ const PROVIDER_NATIVE_SESSION_COMMANDS = Object.freeze({
       plural: 'project sessions',
     }),
   }),
-  gemini: Object.freeze({
-    resume: 'chat_resume',
-    sessions: 'chat_sessions',
+  antigravity: Object.freeze({
+    resume: 'conversation_resume',
+    sessions: 'conversation_sessions',
     sessionTerm: Object.freeze({
-      singular: 'chat session',
-      plural: 'chat sessions',
+      singular: 'conversation',
+      plural: 'conversations',
     }),
   }),
 });
 
 const ALL_SESSION_COMMAND_ALIASES = Object.freeze({
-  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'chat_sessions']),
-  resume: Object.freeze(['rollout_resume', 'project_resume', 'chat_resume']),
+  sessions: Object.freeze(['rollout_sessions', 'project_sessions', 'conversation_sessions', 'chat_sessions']),
+  resume: Object.freeze(['rollout_resume', 'project_resume', 'conversation_resume', 'chat_resume']),
 });
 
 const REASONING_LEVEL_DISPLAY_ORDER = Object.freeze(['xhigh', 'high', 'medium', 'low']);
@@ -57,9 +57,11 @@ const COMMAND_ALIASES = Object.freeze({
   defaultdir: 'setdefaultdir',
   rollout_sessions: 'sessions',
   project_sessions: 'sessions',
+  conversation_sessions: 'sessions',
   chat_sessions: 'sessions',
   rollout_resume: 'resume',
   project_resume: 'resume',
+  conversation_resume: 'resume',
   chat_resume: 'resume',
 });
 
@@ -89,6 +91,11 @@ function getProviderSessionTerm(provider, { plural = false } = {}) {
 
 function getSessionCommandAliases(commandName, botProvider = null) {
   if (!botProvider) return [...(ALL_SESSION_COMMAND_ALIASES[commandName] || [])];
+  if (normalizeProvider(botProvider) === 'antigravity') {
+    return commandName === 'sessions'
+      ? ['conversation_sessions', 'chat_sessions']
+      : ['conversation_resume', 'chat_resume'];
+  }
   const alias = getProviderCommandAlias(botProvider, commandName);
   return alias ? [alias] : [];
 }
@@ -97,10 +104,12 @@ function getSessionAliasDescriptions(aliases = []) {
   return Object.freeze(Object.fromEntries(aliases.map((alias) => {
     if (alias === 'rollout_sessions') return [alias, '列出最近的 rollout sessions（同 sessions）'];
     if (alias === 'project_sessions') return [alias, '列出最近的 project sessions（同 sessions）'];
-    if (alias === 'chat_sessions') return [alias, '列出最近的 chat sessions（同 sessions）'];
+    if (alias === 'conversation_sessions') return [alias, '列出最近的 conversations（同 sessions）'];
+    if (alias === 'chat_sessions') return [alias, '列出最近的 legacy chat sessions（同 sessions）'];
     if (alias === 'rollout_resume') return [alias, '继承一个已有的 rollout session（同 resume）'];
     if (alias === 'project_resume') return [alias, '继承一个已有的 project session（同 resume）'];
-    if (alias === 'chat_resume') return [alias, '继承一个已有的 chat session（同 resume）'];
+    if (alias === 'conversation_resume') return [alias, '继承一个已有的 conversation（同 resume）'];
+    if (alias === 'chat_resume') return [alias, '继承一个已有的 legacy chat session（同 resume）'];
     return [alias, alias];
   })));
 }
@@ -195,7 +204,7 @@ export function buildSlashCommandEntries({ botProvider = null } = {}) {
           .addChoices(
             { name: 'codex', value: 'codex' },
             { name: 'claude', value: 'claude' },
-            { name: 'gemini', value: 'gemini' },
+            { name: 'antigravity', value: 'antigravity' },
             { name: 'status', value: 'status' },
           ));
       },

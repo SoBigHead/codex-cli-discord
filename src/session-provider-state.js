@@ -78,6 +78,36 @@ function ensureProviderEntryShape(entry) {
   return state;
 }
 
+function hasProviderScopedValue(field, value) {
+  if (field === 'configOverrides') return Array.isArray(value) && value.length > 0;
+  return value !== null && value !== undefined && value !== '';
+}
+
+function mergeProviderEntryShape(existing, incoming, {
+  session,
+  fromProvider,
+  intoProvider,
+} = {}) {
+  const target = ensureProviderEntryShape(existing);
+  const source = ensureProviderEntryShape(incoming);
+  for (const field of PROVIDER_SCOPED_SESSION_FIELDS) {
+    const targetHasValue = hasProviderScopedValue(field, target[field]);
+    const sourceHasValue = hasProviderScopedValue(field, source[field]);
+    if (!targetHasValue && sourceHasValue) {
+      target[field] = cloneProviderScopedValue(field, source[field]);
+      continue;
+    }
+    if (targetHasValue && sourceHasValue && JSON.stringify(target[field]) !== JSON.stringify(source[field])) {
+      const warning = `legacy provider state ${fromProvider || 'unknown'}.${field} conflicts with ${intoProvider || 'provider'}.${field}; kept ${intoProvider || 'provider'}`;
+      if (session && typeof session === 'object') {
+        if (!Array.isArray(session.providerMigrationWarnings)) session.providerMigrationWarnings = [];
+        if (!session.providerMigrationWarnings.includes(warning)) session.providerMigrationWarnings.push(warning);
+      }
+    }
+  }
+  return target;
+}
+
 function hasTopLevelProviderScopedState(session) {
   if (!session || typeof session !== 'object') return false;
   return PROVIDER_SCOPED_SESSION_FIELDS.some((field) => {
@@ -104,7 +134,15 @@ export function ensureSessionProviderStates(session, {
     const nextState = ensureProviderEntryShape(rawState);
     if (normalizedProvider !== providerKey) {
       delete session.providers[providerKey];
-      session.providers[normalizedProvider] = nextState;
+      if (session.providers[normalizedProvider]) {
+        session.providers[normalizedProvider] = mergeProviderEntryShape(session.providers[normalizedProvider], nextState, {
+          session,
+          fromProvider: providerKey,
+          intoProvider: normalizedProvider,
+        });
+      } else {
+        session.providers[normalizedProvider] = nextState;
+      }
       changed = true;
       continue;
     }

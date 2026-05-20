@@ -16,12 +16,12 @@ function createFormatters(overrides = {}) {
     normalizeUiLanguage: (value) => (String(value || '').trim().toLowerCase() === 'en' ? 'en' : 'zh'),
     getSessionProvider: (session) => session?.provider || 'codex',
     getProviderDisplayName: (provider) => {
-      if (provider === 'gemini') return 'Gemini CLI';
+      if (provider === 'antigravity' || provider === 'gemini') return 'Antigravity CLI';
       if (provider === 'claude') return 'Claude Code';
       return 'Codex CLI';
     },
     getProviderShortName: (provider) => {
-      if (provider === 'gemini') return 'Gemini';
+      if (provider === 'antigravity' || provider === 'gemini') return 'Antigravity';
       if (provider === 'claude') return 'Claude';
       return 'Codex';
     },
@@ -33,7 +33,7 @@ function createFormatters(overrides = {}) {
     providerSupportsRawConfigOverrides: (provider) => provider === 'codex',
     formatProviderSessionTerm: (provider) => {
       if (provider === 'claude') return 'project session';
-      if (provider === 'gemini') return 'chat session';
+      if (provider === 'antigravity' || provider === 'gemini') return 'conversation';
       return 'rollout session';
     },
     formatProviderRuntimeSummary: (provider) => `runtime:${provider}`,
@@ -43,7 +43,7 @@ function createFormatters(overrides = {}) {
     formatProviderRawConfigSurface: (provider) => `config:${provider}`,
     formatProviderReasoningSurface: (provider) => `reasoning:${provider}`,
     getSupportedReasoningEffortLevels: (provider) => {
-      if (provider === 'gemini') return [];
+      if (provider === 'antigravity' || provider === 'gemini') return [];
       if (provider === 'claude') return ['low', 'medium', 'high'];
       return ['low', 'medium', 'high', 'xhigh'];
     },
@@ -56,7 +56,7 @@ function createFormatters(overrides = {}) {
       value: session?.codexProfile || session?.inheritedCodexProfile || null,
       source: session?.codexProfileSource
         || (session?.codexProfile ? 'session override' : (session?.inheritedCodexProfile ? 'parent channel' : 'provider default')),
-      supported: session?.provider !== 'claude' && session?.provider !== 'gemini',
+      supported: session?.provider !== 'claude' && session?.provider !== 'antigravity' && session?.provider !== 'gemini',
       valid: session?.codexProfileValid !== false,
       isExplicit: Boolean(session?.codexProfile || session?.inheritedCodexProfile),
       error: session?.codexProfileError || null,
@@ -85,7 +85,7 @@ function createFormatters(overrides = {}) {
     resolveTimeoutSetting: () => ({ timeoutMs: 60_000, source: 'session override' }),
     resolveFastModeSetting: (session) => ({
       enabled: session?.fastMode ?? true,
-      supported: session?.provider !== 'claude' && session?.provider !== 'gemini',
+      supported: session?.provider !== 'claude' && session?.provider !== 'antigravity' && session?.provider !== 'gemini',
       source: session?.fastMode === null || session?.fastMode === undefined ? 'config.toml' : 'session override',
     }),
     getEffectiveSecurityProfile: () => ({ profile: 'public', source: 'session override' }),
@@ -462,18 +462,18 @@ test('createReportFormatters shows concrete provider model values without provid
 });
 
 test('createReportFormatters.formatDoctorReport includes allowlist and workspace lock diagnostics', () => {
-  const formatters = createFormatters({ botProvider: 'gemini' });
-  const session = { provider: 'gemini', language: 'en', workspaceDir: '/repo/live' };
+  const formatters = createFormatters({ botProvider: 'antigravity' });
+  const session = { provider: 'antigravity', language: 'en', workspaceDir: '/repo/live' };
 
   const report = formatters.formatDoctorReport('thread-1', session, { id: 'channel-1' });
 
-  assert.match(report, /bot mode: locked to `gemini` \(Gemini CLI\)/);
+  assert.match(report, /bot mode: locked to `antigravity` \(Antigravity CLI\)/);
   assert.match(report, /workspace serialization: busy/);
-  assert.match(report, /runtime session store: store:gemini/);
-  assert.match(report, /runtime resume surface: resume:gemini/);
-  assert.match(report, /runtime native compact: compact:gemini/);
-  assert.match(report, /runtime raw config: config:gemini/);
-  assert.match(report, /runtime reasoning: reasoning:gemini/);
+  assert.match(report, /runtime session store: store:antigravity/);
+  assert.match(report, /runtime resume surface: resume:antigravity/);
+  assert.match(report, /runtime native compact: compact:antigravity/);
+  assert.match(report, /runtime raw config: config:antigravity/);
+  assert.match(report, /runtime reasoning: reasoning:antigravity/);
   assert.match(report, /ALLOWED_CHANNEL_IDS: 2 configured/);
   assert.match(report, /ALLOWED_USER_IDS: 1 configured/);
 });
@@ -481,24 +481,24 @@ test('createReportFormatters.formatDoctorReport includes allowlist and workspace
 test('createReportFormatters.formatHelpReport documents browse actions and provider switching', () => {
   const sharedFormatters = createFormatters();
   const lockedFormatters = createFormatters({ botProvider: 'codex' });
-  const geminiHelp = sharedFormatters.formatHelpReport({ language: 'en', provider: 'gemini' });
+  const antigravityHelp = sharedFormatters.formatHelpReport({ language: 'en', provider: 'antigravity' });
 
   const sharedHelp = sharedFormatters.formatHelpReport({ language: 'en' });
   const lockedHelp = lockedFormatters.formatHelpReport({ language: 'en' });
 
-  assert.match(sharedHelp, /!provider <codex\|claude\|gemini\|status>/);
+  assert.match(sharedHelp, /!provider <codex\|claude\|antigravity\|status>/);
   assert.match(sharedHelp, /!setdir <path\|browse\|default\|status>/);
   assert.match(sharedHelp, /!setdefaultdir <path\|browse\|clear\|status>/);
   assert.match(sharedHelp, /!dq/);
   assert.match(sharedHelp, /native runtime store/);
   assert.match(sharedHelp, /!rollout_resume/);
   assert.match(sharedHelp, /!rollout_sessions/);
-  assert.match(geminiHelp, /!chat_resume/);
-  assert.match(geminiHelp, /!chat_sessions/);
-  assert.doesNotMatch(geminiHelp, /!config <key=value>/);
-  assert.doesNotMatch(geminiHelp, /!effort </);
-  assert.match(geminiHelp, /raw config passthrough/);
-  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|gemini\|status>/);
+  assert.match(antigravityHelp, /!conversation_resume/);
+  assert.match(antigravityHelp, /!conversation_sessions/);
+  assert.doesNotMatch(antigravityHelp, /!config <key=value>/);
+  assert.doesNotMatch(antigravityHelp, /!effort </);
+  assert.match(antigravityHelp, /raw config passthrough/);
+  assert.doesNotMatch(lockedHelp, /!provider <codex\|claude\|antigravity\|status>/);
 });
 
 test('createReportFormatters.workspace reports explain session reset and lock owner', () => {
@@ -506,18 +506,18 @@ test('createReportFormatters.workspace reports explain session reset and lock ow
 
   const updateReport = formatters.formatWorkspaceUpdateReport(
     'thread-1',
-    { provider: 'gemini', language: 'en', workspaceDir: '/repo/next' },
+    { provider: 'antigravity', language: 'en', workspaceDir: '/repo/next' },
     { sessionReset: true, clearedOverride: false },
   );
   const busyReport = formatters.formatWorkspaceBusyReport(
     { language: 'zh' },
     '/repo/next',
-    { provider: 'gemini', key: 'thread-9', acquiredAt: '2026-03-13T08:00:00.000Z' },
+    { provider: 'antigravity', key: 'thread-9', acquiredAt: '2026-03-13T08:00:00.000Z' },
   );
 
-  assert.match(updateReport, /reset because gemini sessions are treated as workspace-scoped/);
+  assert.match(updateReport, /reset because antigravity sessions are treated as workspace-scoped/);
   assert.match(busyReport, /workspace 正忙/);
-  assert.match(busyReport, /当前持有 provider: `gemini`/);
+  assert.match(busyReport, /当前持有 provider: `antigravity`/);
   assert.match(busyReport, /当前持有频道: `thread-9`/);
   assert.match(busyReport, /立刻把当前频道切到独立 workspace/);
   assert.match(busyReport, /后续新子 thread 默认独立 workspace/);

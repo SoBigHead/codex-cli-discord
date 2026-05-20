@@ -9,6 +9,16 @@ import { autoRepairProxyEnv } from './proxy-env.js';
 const FEATURES_SECTION = 'features';
 const CODEX_MODEL_CATALOG_CACHE = new Map();
 const CLAUDE_MODEL_CATALOG_CACHE = new Map();
+const ANTIGRAVITY_MODEL_CATALOG_CACHE = new Map();
+const ANTIGRAVITY_DOCUMENTED_MODELS = Object.freeze([
+  'Gemini 3.5 Flash',
+  'Gemini 3.1 Pro (High)',
+  'Gemini 3.1 Pro (Low)',
+  'Gemini 3 Flash',
+  'Claude Sonnet 4.6 (Thinking)',
+  'Claude Opus 4.6 (Thinking)',
+  'GPT-OSS-120B',
+]);
 
 function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -22,6 +32,14 @@ export function resolveCodexConfigPath({ env = process.env } = {}) {
   return path.join(resolveCodexHome(env), '.codex', 'config.toml');
 }
 
+export function resolveAntigravitySettingsPath({ env = process.env } = {}) {
+  return path.join(resolveCodexHome(env), '.gemini', 'antigravity-cli', 'settings.json');
+}
+
+function resolveAntigravityLogDir({ env = process.env } = {}) {
+  return path.join(resolveCodexHome(env), '.gemini', 'antigravity-cli', 'log');
+}
+
 function quoteTomlString(value) {
   return `"${String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 }
@@ -30,6 +48,21 @@ function normalizeOptionalTomlString(value) {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return text || null;
+}
+
+function normalizeOptionalJsonString(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text || null;
+}
+
+function readJsonObjectFile(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf-8');
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${filePath} must contain a JSON object`);
+  }
+  return parsed;
 }
 
 function normalizeTomlLines(lines) {
@@ -182,6 +215,56 @@ export function readCodexProfileCatalog({ env = process.env } = {}) {
   }
 }
 
+export function readAntigravityDefaults({ env = process.env } = {}) {
+  const settingsPath = resolveAntigravitySettingsPath({ env });
+  try {
+    const settings = readJsonObjectFile(settingsPath);
+    const model = normalizeOptionalJsonString(settings.model);
+    return {
+      model,
+      modelConfigured: Boolean(model),
+      profile: null,
+      profileConfigured: false,
+      effort: null,
+      effortConfigured: false,
+      fastMode: false,
+      fastModeConfigured: false,
+      source: 'settings.json',
+      settingsPath,
+      error: null,
+    };
+  } catch (err) {
+    if (err?.code === 'ENOENT') {
+      return {
+        model: null,
+        modelConfigured: false,
+        profile: null,
+        profileConfigured: false,
+        effort: null,
+        effortConfigured: false,
+        fastMode: false,
+        fastModeConfigured: false,
+        source: 'provider',
+        settingsPath,
+        error: null,
+      };
+    }
+    return {
+      model: null,
+      modelConfigured: false,
+      profile: null,
+      profileConfigured: false,
+      effort: null,
+      effortConfigured: false,
+      fastMode: false,
+      fastModeConfigured: false,
+      source: 'settings.json',
+      settingsPath,
+      error: String(err?.message || err || 'unknown error'),
+    };
+  }
+}
+
 function normalizeCodexModelCatalog(raw) {
   const parsed = JSON.parse(String(raw || ''));
   const models = Array.isArray(parsed?.models) ? parsed.models : [];
@@ -256,6 +339,115 @@ function normalizeClaudeModelCatalog(raw) {
     })),
     error: null,
   };
+}
+
+function listRecentAntigravityLogFiles(logDir, limit = 12) {
+  try {
+    return fs.readdirSync(logDir)
+      .filter((name) => /\.log$/i.test(name))
+      .map((name) => {
+        const file = path.join(logDir, name);
+        let mtimeMs = 0;
+        try {
+          mtimeMs = fs.statSync(file).mtimeMs;
+        } catch {
+          mtimeMs = 0;
+        }
+        return { file, mtimeMs };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(0, limit)
+      .map((entry) => entry.file);
+  } catch {
+    return [];
+  }
+}
+
+function collectAntigravityLogModels({ env = process.env, maxFiles = 12 } = {}) {
+  const logDir = resolveAntigravityLogDir({ env });
+  const models = [];
+  const seen = new Set();
+  const addModel = (value) => {
+    const model = normalizeOptionalJsonString(value);
+    if (!model) return;
+    const key = model.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    models.push(model);
+  };
+  const selectedPattern = /selected model override to backend:\s*label="([^"]+)"/gi;
+  const resolvingPattern = /Resolving model\s+([^\r\n]+)/gi;
+
+  for (const file of listRecentAntigravityLogFiles(logDir, maxFiles)) {
+    let raw = '';
+    try {
+      raw = fs.readFileSync(file, 'utf-8');
+    } catch {
+      continue;
+    }
+
+    let match = selectedPattern.exec(raw);
+    while (match) {
+      addModel(match[1]);
+      match = selectedPattern.exec(raw);
+    }
+    match = resolvingPattern.exec(raw);
+    while (match) {
+      addModel(match[1]);
+      match = resolvingPattern.exec(raw);
+    }
+  }
+
+  return models;
+}
+
+export function readAntigravityModelCatalog({
+  env = process.env,
+  now = Date.now,
+  ttlMs = 5 * 60_000,
+  maxLogFiles = 12,
+} = {}) {
+  const settingsPath = resolveAntigravitySettingsPath({ env });
+  const cacheKey = `${settingsPath}:${maxLogFiles}`;
+  const cached = ANTIGRAVITY_MODEL_CATALOG_CACHE.get(cacheKey);
+  const currentTime = typeof now === 'function' ? now() : Date.now();
+  if (cached && currentTime - cached.timestamp < ttlMs) {
+    return cached.catalog;
+  }
+
+  const defaults = readAntigravityDefaults({ env });
+  const models = [];
+  const seen = new Set();
+  const addModel = (slug, description, visibility) => {
+    const value = normalizeOptionalJsonString(slug);
+    if (!value) return;
+    const key = value.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    models.push({
+      slug: value,
+      displayName: value,
+      description,
+      defaultReasoningLevel: null,
+      supportedReasoningLevels: [],
+      visibility,
+    });
+  };
+
+  addModel(defaults.model, 'Antigravity configured model from settings.json', 'settings');
+  for (const model of ANTIGRAVITY_DOCUMENTED_MODELS) {
+    addModel(model, 'Antigravity documented reasoning model', 'documented');
+  }
+  for (const model of collectAntigravityLogModels({ env, maxFiles: maxLogFiles })) {
+    addModel(model, 'Antigravity model observed in local CLI logs', 'logs');
+  }
+
+  const catalog = {
+    models,
+    error: defaults.error,
+  };
+  ANTIGRAVITY_MODEL_CATALOG_CACHE.set(cacheKey, { timestamp: currentTime, catalog });
+  return catalog;
 }
 
 export function readCodexModelCatalog({
@@ -346,6 +538,9 @@ export function readProviderModelCatalog({
   if (normalized === 'claude') {
     return readClaudeModelCatalog({ claudeBin, env, execFileSyncFn, now, ttlMs });
   }
+  if (normalized === 'gemini' || normalized === 'agy' || normalized === 'antigravity') {
+    return readAntigravityModelCatalog({ env, now, ttlMs });
+  }
   return { models: [], error: null };
 }
 
@@ -397,6 +592,39 @@ export function writeCodexDefaults({
   return readCodexDefaults({ env });
 }
 
+export function writeAntigravityModelSetting({
+  env = process.env,
+  model = undefined,
+} = {}) {
+  if (model === undefined) {
+    return readAntigravityDefaults({ env });
+  }
+
+  const settingsPath = resolveAntigravitySettingsPath({ env });
+  const settingsDir = path.dirname(settingsPath);
+  let settings = {};
+  try {
+    settings = readJsonObjectFile(settingsPath);
+  } catch (err) {
+    if (err?.code !== 'ENOENT') {
+      throw err;
+    }
+    settings = {};
+  }
+
+  const normalizedModel = normalizeOptionalJsonString(model);
+  if (normalizedModel === null) {
+    delete settings.model;
+  } else {
+    settings.model = normalizedModel;
+  }
+
+  fs.mkdirSync(settingsDir, { recursive: true });
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8');
+  ANTIGRAVITY_MODEL_CATALOG_CACHE.clear();
+  return readAntigravityDefaults({ env });
+}
+
 export function normalizeSlashPrefix(value) {
   const raw = String(value || '')
     .trim()
@@ -409,20 +637,22 @@ export function normalizeSlashPrefix(value) {
 
 export function renderMissingDiscordTokenHint({ botProvider = null, env = process.env } = {}) {
   if (botProvider) {
-    return `Missing Discord token in environment (${`DISCORD_TOKEN_${botProvider.toUpperCase()}`} or DISCORD_TOKEN)`;
+    const providerKey = String(botProvider || '').trim().toUpperCase();
+    const legacy = providerKey === 'ANTIGRAVITY' ? ' or DISCORD_TOKEN_GEMINI' : '';
+    return `Missing Discord token in environment (${`DISCORD_TOKEN_${providerKey}`}${legacy} or DISCORD_TOKEN)`;
   }
 
   const hasCodexScopedToken = Boolean(String(env.CODEX__DISCORD_TOKEN || env.DISCORD_TOKEN_CODEX || '').trim());
   const hasClaudeScopedToken = Boolean(String(env.CLAUDE__DISCORD_TOKEN || env.DISCORD_TOKEN_CLAUDE || '').trim());
-  const hasGeminiScopedToken = Boolean(String(env.GEMINI__DISCORD_TOKEN || env.DISCORD_TOKEN_GEMINI || '').trim());
+  const hasAntigravityScopedToken = Boolean(String(env.ANTIGRAVITY__DISCORD_TOKEN || env.DISCORD_TOKEN_ANTIGRAVITY || env.GEMINI__DISCORD_TOKEN || env.DISCORD_TOKEN_GEMINI || '').trim());
 
-  if (hasCodexScopedToken || hasClaudeScopedToken || hasGeminiScopedToken) {
+  if (hasCodexScopedToken || hasClaudeScopedToken || hasAntigravityScopedToken) {
     const availableProviders = [
       hasCodexScopedToken ? 'codex' : null,
       hasClaudeScopedToken ? 'claude' : null,
-      hasGeminiScopedToken ? 'gemini' : null,
+      hasAntigravityScopedToken ? 'antigravity' : null,
     ].filter(Boolean).join(', ');
-    return `Missing DISCORD_TOKEN in shared mode. Found provider-scoped tokens for: ${availableProviders}. Start with npm run start:codex / npm run start:claude / npm run start:gemini, or add a shared DISCORD_TOKEN.`;
+    return `Missing DISCORD_TOKEN in shared mode. Found provider-scoped tokens for: ${availableProviders}. Start with npm run start:codex / npm run start:claude / npm run start:antigravity, or add a shared DISCORD_TOKEN.`;
   }
 
   return 'Missing DISCORD_TOKEN in environment';

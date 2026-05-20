@@ -41,20 +41,24 @@ export function loadRuntimeEnv({ rootDir, env = process.env } = {}) {
 }
 
 function applyProviderScopedEnv(provider, { env, immutableKeys, loadedKeys }) {
-  const prefix = `${provider.toUpperCase()}__`;
+  const prefixes = provider === 'antigravity'
+    ? ['GEMINI__', 'ANTIGRAVITY__']
+    : [`${provider.toUpperCase()}__`];
   const appliedKeys = [];
   const entries = Object.entries({ ...env });
 
-  for (const [key, value] of entries) {
-    if (!key.startsWith(prefix)) continue;
+  for (const prefix of prefixes) {
+    for (const [key, value] of entries) {
+      if (!key.startsWith(prefix)) continue;
 
-    const targetKey = key.slice(prefix.length).trim();
-    if (!targetKey) continue;
-    if (immutableKeys.has(targetKey) && !loadedKeys.has(targetKey)) continue;
+      const targetKey = key.slice(prefix.length).trim();
+      if (!targetKey) continue;
+      if (immutableKeys.has(targetKey) && !loadedKeys.has(targetKey)) continue;
 
-    env[targetKey] = value;
-    loadedKeys.add(targetKey);
-    appliedKeys.push(targetKey);
+      env[targetKey] = value;
+      loadedKeys.add(targetKey);
+      appliedKeys.push(targetKey);
+    }
   }
 
   return appliedKeys;

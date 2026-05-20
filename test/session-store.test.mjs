@@ -12,6 +12,13 @@ function normalizeProvider(value) {
   return 'codex';
 }
 
+function normalizeProviderWithAntigravity(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'claude') return 'claude';
+  if (raw === 'antigravity' || raw === 'gemini' || raw === 'google' || raw === 'agy') return 'antigravity';
+  return 'codex';
+}
+
 function normalizeUiLanguage(value) {
   return value === 'en' ? 'en' : 'zh';
 }
@@ -512,6 +519,146 @@ test('createSessionStore projects current provider state and preserves other pro
   assert.equal(session.model, 'claude-opus');
   assert.equal(persisted.threads['thread-1'].providers.claude.model, 'claude-opus');
   assert.equal(persisted.threads['thread-1'].providers.codex.model, 'gpt-5.3-codex');
+});
+
+test('createSessionStore migrates legacy gemini provider bucket to antigravity without losing session id', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-discord-session-store-'));
+  const dataFile = path.join(root, 'sessions.json');
+  const workspaceRoot = path.join(root, 'workspaces');
+  fs.writeFileSync(dataFile, JSON.stringify({
+    threads: {
+      'thread-1': {
+        provider: 'gemini',
+        runnerSessionId: 'agy-conv-1',
+        codexThreadId: 'agy-conv-1',
+        model: 'Claude Opus 4.6 (Thinking)',
+        mode: 'safe',
+        language: 'zh',
+        onboardingEnabled: true,
+        providers: {
+          gemini: {
+            runnerSessionId: 'agy-conv-1',
+            codexThreadId: 'agy-conv-1',
+            model: 'Claude Opus 4.6 (Thinking)',
+          },
+        },
+      },
+    },
+  }, null, 2));
+
+  const store = createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider: normalizeProviderWithAntigravity,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  });
+
+  const session = store.getSession('thread-1');
+  const persisted = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+
+  assert.equal(session.provider, 'antigravity');
+  assert.equal(session.runnerSessionId, 'agy-conv-1');
+  assert.equal(session.model, 'Claude Opus 4.6 (Thinking)');
+  assert.ok(persisted.threads['thread-1'].providers.antigravity);
+  assert.equal(persisted.threads['thread-1'].providers.antigravity.runnerSessionId, 'agy-conv-1');
+  assert.equal(persisted.threads['thread-1'].providers.gemini, undefined);
+});
+
+test('createSessionStore keeps canonical antigravity values when legacy gemini bucket conflicts', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-discord-session-store-'));
+  const dataFile = path.join(root, 'sessions.json');
+  const workspaceRoot = path.join(root, 'workspaces');
+  fs.writeFileSync(dataFile, JSON.stringify({
+    threads: {
+      'thread-1': {
+        provider: 'gemini',
+        mode: 'safe',
+        language: 'zh',
+        onboardingEnabled: true,
+        providers: {
+          gemini: {
+            runnerSessionId: 'old',
+            codexThreadId: 'old',
+            model: 'old-model',
+          },
+          antigravity: {
+            runnerSessionId: 'new',
+            codexThreadId: 'new',
+            model: 'new-model',
+          },
+        },
+      },
+    },
+  }, null, 2));
+
+  const store = createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider: normalizeProviderWithAntigravity,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  });
+
+  const session = store.getSession('thread-1');
+  const persisted = JSON.parse(fs.readFileSync(dataFile, 'utf8'));
+
+  assert.equal(session.provider, 'antigravity');
+  assert.equal(session.runnerSessionId, 'new');
+  assert.equal(session.model, 'new-model');
+  assert.equal(persisted.threads['thread-1'].providers.antigravity.runnerSessionId, 'new');
+  assert.equal(persisted.threads['thread-1'].providers.gemini, undefined);
+  assert.match(persisted.threads['thread-1'].providerMigrationWarnings.join('\n'), /legacy provider state gemini\.runnerSessionId conflicts/);
+});
+
+test('createSessionStore surfaces malformed state instead of replacing it with empty DB', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-cli-discord-session-store-'));
+  const dataFile = path.join(root, 'sessions.json');
+  const workspaceRoot = path.join(root, 'workspaces');
+  fs.writeFileSync(dataFile, '{bad json', 'utf8');
+
+  assert.throws(() => createSessionStore({
+    dataFile,
+    workspaceRoot,
+    defaults: {
+      provider: 'codex',
+      mode: 'safe',
+      language: 'zh',
+      onboardingEnabled: true,
+    },
+    getSessionId: (session) => String(session?.runnerSessionId || session?.codexThreadId || '').trim() || null,
+    normalizeProvider: normalizeProviderWithAntigravity,
+    normalizeUiLanguage,
+    normalizeSessionSecurityProfile,
+    normalizeSessionTimeoutMs,
+    normalizeSessionCompactStrategy,
+    normalizeSessionCompactEnabled,
+    normalizeSessionCompactTokenLimit,
+  }), /Failed to load session DB/);
+
+  assert.equal(fs.readFileSync(dataFile, 'utf8'), '{bad json');
 });
 
 test('createSessionStore.saveDb preserves untouched provider buckets before a session is hydrated', () => {

@@ -8,12 +8,15 @@ import {
   configureRuntimeProxy,
   createDiscordClient,
   normalizeSlashPrefix,
+  readAntigravityDefaults,
+  readAntigravityModelCatalog,
   readCodexDefaults,
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
   readProviderModelCatalog,
   renderMissingDiscordTokenHint,
+  writeAntigravityModelSetting,
   writeCodexDefaults,
 } from '../src/runtime-bootstrap.js';
 
@@ -286,7 +289,166 @@ test('readClaudeModelCatalog reads aliases and effort levels from Claude CLI hel
   });
 });
 
-test('readProviderModelCatalog dispatches Claude and unknown providers', () => {
+test('readAntigravityDefaults reads settings.json and reports malformed settings', () => {
+  const rootDir = makeTempRoot();
+  const homeDir = path.join(rootDir, 'home');
+  const settingsDir = path.join(homeDir, '.gemini', 'antigravity-cli');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  const settingsPath = path.join(settingsDir, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify({
+    colorScheme: 'dark',
+    model: 'Claude Opus 4.6 (Thinking)',
+  }));
+
+  assert.deepEqual(readAntigravityDefaults({ env: { HOME: homeDir } }), {
+    model: 'Claude Opus 4.6 (Thinking)',
+    modelConfigured: true,
+    profile: null,
+    profileConfigured: false,
+    effort: null,
+    effortConfigured: false,
+    fastMode: false,
+    fastModeConfigured: false,
+    source: 'settings.json',
+    settingsPath,
+    error: null,
+  });
+
+  fs.writeFileSync(settingsPath, '{bad json');
+  const malformed = readAntigravityDefaults({ env: { HOME: homeDir } });
+  assert.equal(malformed.model, null);
+  assert.equal(malformed.source, 'settings.json');
+  assert.match(malformed.error, /Unexpected token|Expected property name/i);
+});
+
+test('writeAntigravityModelSetting preserves settings and rejects malformed settings', () => {
+  const rootDir = makeTempRoot();
+  const homeDir = path.join(rootDir, 'home');
+  const settingsDir = path.join(homeDir, '.gemini', 'antigravity-cli');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  const settingsPath = path.join(settingsDir, 'settings.json');
+  fs.writeFileSync(settingsPath, JSON.stringify({
+    colorScheme: 'dark',
+    enableTelemetry: false,
+    model: 'Gemini 3.5 Flash (High)',
+  }));
+
+  const defaults = writeAntigravityModelSetting({
+    env: { HOME: homeDir },
+    model: 'Claude Opus 4.6 (Thinking)',
+  });
+  assert.equal(defaults.model, 'Claude Opus 4.6 (Thinking)');
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')), {
+    colorScheme: 'dark',
+    enableTelemetry: false,
+    model: 'Claude Opus 4.6 (Thinking)',
+  });
+
+  writeAntigravityModelSetting({ env: { HOME: homeDir }, model: null });
+  assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')), {
+    colorScheme: 'dark',
+    enableTelemetry: false,
+  });
+
+  fs.writeFileSync(settingsPath, '{bad json');
+  assert.throws(
+    () => writeAntigravityModelSetting({ env: { HOME: homeDir }, model: 'Gemini 3.5 Flash (High)' }),
+    /Unexpected token|Expected property name/i,
+  );
+});
+
+test('readAntigravityModelCatalog lists configured documented and recently observed models', () => {
+  const rootDir = makeTempRoot();
+  const homeDir = path.join(rootDir, 'home');
+  const agyDir = path.join(homeDir, '.gemini', 'antigravity-cli');
+  const logDir = path.join(agyDir, 'log');
+  fs.mkdirSync(logDir, { recursive: true });
+  fs.writeFileSync(path.join(agyDir, 'settings.json'), JSON.stringify({
+    model: 'Claude Opus 4.6 (Thinking)',
+  }));
+  fs.writeFileSync(path.join(logDir, 'cli-1.log'), [
+    'I model_config_manager.go:157] Propagating selected model override to backend: label="Gemini 3.5 Flash (High)"',
+    'I model_resolver.go:227] Resolving model Claude Opus 4.6 (Thinking)',
+  ].join('\n'));
+
+  const catalog = readAntigravityModelCatalog({
+    env: { HOME: homeDir },
+    now: () => 10_000,
+    ttlMs: 0,
+  });
+
+  assert.deepEqual(catalog, {
+    models: [
+      {
+        slug: 'Claude Opus 4.6 (Thinking)',
+        displayName: 'Claude Opus 4.6 (Thinking)',
+        description: 'Antigravity configured model from settings.json',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'settings',
+      },
+      {
+        slug: 'Gemini 3.5 Flash',
+        displayName: 'Gemini 3.5 Flash',
+        description: 'Antigravity documented reasoning model',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'documented',
+      },
+      {
+        slug: 'Gemini 3.1 Pro (High)',
+        displayName: 'Gemini 3.1 Pro (High)',
+        description: 'Antigravity documented reasoning model',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'documented',
+      },
+      {
+        slug: 'Gemini 3.1 Pro (Low)',
+        displayName: 'Gemini 3.1 Pro (Low)',
+        description: 'Antigravity documented reasoning model',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'documented',
+      },
+      {
+        slug: 'Gemini 3 Flash',
+        displayName: 'Gemini 3 Flash',
+        description: 'Antigravity documented reasoning model',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'documented',
+      },
+      {
+        slug: 'Claude Sonnet 4.6 (Thinking)',
+        displayName: 'Claude Sonnet 4.6 (Thinking)',
+        description: 'Antigravity documented reasoning model',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'documented',
+      },
+      {
+        slug: 'GPT-OSS-120B',
+        displayName: 'GPT-OSS-120B',
+        description: 'Antigravity documented reasoning model',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'documented',
+      },
+      {
+        slug: 'Gemini 3.5 Flash (High)',
+        displayName: 'Gemini 3.5 Flash (High)',
+        description: 'Antigravity model observed in local CLI logs',
+        defaultReasoningLevel: null,
+        supportedReasoningLevels: [],
+        visibility: 'logs',
+      },
+    ],
+    error: null,
+  });
+});
+
+test('readProviderModelCatalog dispatches Claude Antigravity and unknown providers', () => {
   const claude = readProviderModelCatalog({
     provider: 'claude',
     claudeBin: 'claude-provider-test',
@@ -296,7 +458,23 @@ test('readProviderModelCatalog dispatches Claude and unknown providers', () => {
     },
   });
   assert.equal(claude.models[0].slug, 'sonnet');
-  assert.deepEqual(readProviderModelCatalog({ provider: 'gemini' }), { models: [], error: null });
+
+  const rootDir = makeTempRoot();
+  const homeDir = path.join(rootDir, 'home');
+  const settingsDir = path.join(homeDir, '.gemini', 'antigravity-cli');
+  fs.mkdirSync(settingsDir, { recursive: true });
+  fs.writeFileSync(path.join(settingsDir, 'settings.json'), JSON.stringify({
+    model: 'Claude Opus 4.6 (Thinking)',
+  }));
+  const antigravity = readProviderModelCatalog({
+    provider: 'gemini',
+    env: { HOME: homeDir },
+    now: () => 5000,
+    ttlMs: 0,
+  });
+  assert.equal(antigravity.models[0].slug, 'Claude Opus 4.6 (Thinking)');
+
+  assert.deepEqual(readProviderModelCatalog({ provider: 'unknown' }), { models: [], error: null });
 });
 
 test('normalizeSlashPrefix trims strips and truncates invalid input', () => {
@@ -307,17 +485,17 @@ test('normalizeSlashPrefix trims strips and truncates invalid input', () => {
 
 test('renderMissingDiscordTokenHint explains provider-scoped and shared token states', () => {
   assert.equal(
-    renderMissingDiscordTokenHint({ botProvider: 'gemini', env: {} }),
-    'Missing Discord token in environment (DISCORD_TOKEN_GEMINI or DISCORD_TOKEN)',
+    renderMissingDiscordTokenHint({ botProvider: 'antigravity', env: {} }),
+    'Missing Discord token in environment (DISCORD_TOKEN_ANTIGRAVITY or DISCORD_TOKEN_GEMINI or DISCORD_TOKEN)',
   );
   assert.match(
     renderMissingDiscordTokenHint({
       env: {
         CODEX__DISCORD_TOKEN: 'a',
-        GEMINI__DISCORD_TOKEN: 'b',
+        ANTIGRAVITY__DISCORD_TOKEN: 'b',
       },
     }),
-    /Found provider-scoped tokens for: codex, gemini/,
+    /Found provider-scoped tokens for: codex, antigravity/,
   );
   assert.equal(
     renderMissingDiscordTokenHint({ env: {} }),

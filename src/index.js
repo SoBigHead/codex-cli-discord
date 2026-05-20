@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url';
+import fs from 'node:fs';
 import path from 'node:path';
 import { safeChannelSend, safeReply, withDiscordNetworkRetry } from './discord-reply-utils.js';
 import { splitForDiscord } from './discord-message-splitter.js';
@@ -139,11 +140,14 @@ import {
   configureRuntimeProxy,
   createDiscordClient,
   normalizeSlashPrefix,
+  readAntigravityDefaults,
+  readAntigravityModelCatalog,
   readCodexDefaults,
   readCodexModelCatalog,
   readCodexProfileCatalog,
   readClaudeModelCatalog,
   renderMissingDiscordTokenHint,
+  writeAntigravityModelSetting,
   writeCodexDefaults,
 } from './runtime-bootstrap.js';
 import {
@@ -181,6 +185,16 @@ const BOT_PROVIDER = parseOptionalProvider(process.env.BOT_PROVIDER);
 const BOT_MODE = describeBotMode(BOT_PROVIDER);
 const DATA_FILE = path.join(DATA_DIR, appendProviderSuffix('sessions.json', BOT_PROVIDER));
 const LOCK_FILE = path.join(DATA_DIR, appendProviderSuffix('bot.lock', BOT_PROVIDER));
+
+function importLegacyAntigravityDataFile() {
+  if (BOT_PROVIDER !== 'antigravity') return;
+  const legacyFile = path.join(DATA_DIR, 'sessions.gemini.json');
+  if (DATA_FILE === legacyFile || fs.existsSync(DATA_FILE) || !fs.existsSync(legacyFile)) return;
+  const raw = fs.readFileSync(legacyFile, 'utf8');
+  JSON.parse(raw);
+  fs.writeFileSync(DATA_FILE, raw);
+  console.warn(`⚠️ Imported legacy Gemini state into ${path.relative(ROOT, DATA_FILE)}; kept ${path.relative(ROOT, legacyFile)} for compatibility.`);
+}
 
 if (envState.loadedFiles.length) {
   const rendered = envState.loadedFiles
@@ -267,7 +281,7 @@ const SHARED_CHILD_THREAD_WORKSPACE_MODE = process.env.CHILD_THREAD_WORKSPACE_MO
 const PROVIDER_CHILD_THREAD_WORKSPACE_MODE_OVERRIDES = {
   codex: process.env.CODEX__CHILD_THREAD_WORKSPACE_MODE,
   claude: process.env.CLAUDE__CHILD_THREAD_WORKSPACE_MODE,
-  gemini: process.env.GEMINI__CHILD_THREAD_WORKSPACE_MODE,
+  antigravity: process.env.ANTIGRAVITY__CHILD_THREAD_WORKSPACE_MODE || process.env.GEMINI__CHILD_THREAD_WORKSPACE_MODE,
 };
 const {
   resolve: resolveChildThreadWorkspaceMode,
@@ -282,7 +296,7 @@ const SHARED_DEFAULT_WORKSPACE_DIR = resolveConfiguredWorkspaceDir(process.env.D
 const PROVIDER_DEFAULT_WORKSPACE_OVERRIDES = {
   codex: resolveConfiguredWorkspaceDir(process.env.CODEX__DEFAULT_WORKSPACE_DIR),
   claude: resolveConfiguredWorkspaceDir(process.env.CLAUDE__DEFAULT_WORKSPACE_DIR),
-  gemini: resolveConfiguredWorkspaceDir(process.env.GEMINI__DEFAULT_WORKSPACE_DIR),
+  antigravity: resolveConfiguredWorkspaceDir(process.env.ANTIGRAVITY__DEFAULT_WORKSPACE_DIR || process.env.GEMINI__DEFAULT_WORKSPACE_DIR),
 };
 const {
   resolve: resolveProviderDefaultWorkspace,
@@ -325,7 +339,7 @@ const TASK_RETRY_MAX_DELAY_MS = Math.max(
 );
 const CODEX_BIN = (process.env.CODEX_BIN || 'codex').trim() || 'codex';
 const CLAUDE_BIN = (process.env.CLAUDE_BIN || 'claude').trim() || 'claude';
-const GEMINI_BIN = (process.env.GEMINI_BIN || 'gemini').trim() || 'gemini';
+const ANTIGRAVITY_BIN = (process.env.ANTIGRAVITY_BIN || process.env.GEMINI_BIN || 'agy').trim() || 'agy';
 const SHOW_REASONING = String(process.env.SHOW_REASONING || 'false').toLowerCase() === 'true';
 const DEBUG_EVENTS = String(process.env.DEBUG_EVENTS || 'false').toLowerCase() === 'true';
 const PROGRESS_UPDATES_ENABLED = String(process.env.PROGRESS_UPDATES_ENABLED || 'true').toLowerCase() !== 'false';
@@ -416,12 +430,12 @@ const SPAWN_ENV = buildSpawnEnv(process.env);
 const getProviderBin = (provider) => getProviderBinBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
-  geminiBin: GEMINI_BIN,
+  antigravityBin: ANTIGRAVITY_BIN,
 });
 const getCliHealth = (provider = DEFAULT_PROVIDER) => getCliHealthBase(provider, {
   codexBin: CODEX_BIN,
   claudeBin: CLAUDE_BIN,
-  geminiBin: GEMINI_BIN,
+  antigravityBin: ANTIGRAVITY_BIN,
   spawnEnv: SPAWN_ENV,
   safeError,
 });
@@ -451,6 +465,7 @@ const getProjectUpgradeStatus = (options = {}) => (
 
 ensureDir(DATA_DIR);
 ensureDir(WORKSPACE_ROOT);
+importLegacyAntigravityDataFile();
 
 const bootCliHealth = getCliHealth(DEFAULT_PROVIDER);
 if (bootCliHealth.ok) {
@@ -496,6 +511,7 @@ const appContext = createAppContext({
     readDefaultCodexProfile: resolveDefaultCodexProfile,
     defaultModel: DEFAULT_MODEL,
     readCodexDefaults,
+    readAntigravityDefaults: () => readAntigravityDefaults({ env: SPAWN_ENV }),
     readCodexProfileCatalog,
     normalizeProvider,
     getSupportedCompactStrategies,
@@ -602,6 +618,13 @@ const appContext = createAppContext({
       extractAgentMessageText,
       isFinalAnswerLikeAgentMessage,
       readGeminiSessionState,
+      applyProviderModelSetting: ({ provider, modelSetting }) => {
+        if (normalizeProvider(provider) !== 'antigravity') return null;
+        return writeAntigravityModelSetting({
+          env: SPAWN_ENV,
+          model: modelSetting?.value,
+        });
+      },
       getCodexThreadGoal: (options) => getCodexThreadGoal({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
       unsubscribeCodexThread: (options) => unsubscribeCodexThread({ ...options, codexBin: CODEX_BIN, env: SPAWN_ENV }),
     },
@@ -688,6 +711,7 @@ const appContext = createAppContext({
       getModelCatalog: (provider) => {
         if (provider === 'codex') return readCodexModelCatalog({ codexBin: CODEX_BIN, env: SPAWN_ENV });
         if (provider === 'claude') return readClaudeModelCatalog({ claudeBin: CLAUDE_BIN, env: SPAWN_ENV });
+        if (normalizeProvider(provider) === 'antigravity') return readAntigravityModelCatalog({ env: SPAWN_ENV });
         return { models: [], error: null };
       },
       getProviderCompactCapabilities,

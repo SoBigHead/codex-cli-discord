@@ -1352,7 +1352,7 @@ test('createSlashCommandRouter rejects only unsupported compact actions for non-
   const state = createRouterState({
     parseCompactConfigAction: () => ({ type: 'set_strategy', strategy: 'native' }),
     providerSupportsCompactConfigAction: () => false,
-    formatCompactConfigUnsupported: () => '⚠️ 当前 provider Gemini CLI 不支持 `native` 压缩。',
+    formatCompactConfigUnsupported: () => '⚠️ 当前 provider Antigravity CLI 不支持 `native` 压缩。',
   });
   state.session.provider = 'gemini';
   const interaction = createInteraction('cx_compact');
@@ -1368,7 +1368,7 @@ test('createSlashCommandRouter rejects only unsupported compact actions for non-
 
   assert.equal(handled, true);
   assert.deepEqual(state.replies, [{
-    content: '⚠️ 当前 provider Gemini CLI 不支持 `native` 压缩。',
+    content: '⚠️ 当前 provider Antigravity CLI 不支持 `native` 压缩。',
     flags: 64,
   }]);
 });

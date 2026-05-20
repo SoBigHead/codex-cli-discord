@@ -1,6 +1,6 @@
 # Agents in Discord
 
-A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, and **Gemini CLI** from inside Discord.
+A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, and **Antigravity CLI** from inside Discord.
 
 > This project is a standalone Discord bot / bridge. It is **not** an OpenClaw plugin, and it does **not** depend on OpenClaw to run.
 
@@ -18,7 +18,7 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, an
 - Provider-aware runtime surface:
   - Codex: rollout sessions, global `~/.codex/sessions` history, raw config passthrough, configurable `native_limit`
   - Claude: project sessions, portable resume across workspaces, provider-default native compaction
-  - Gemini: chat sessions, workspace-bound resume, provider-default native compaction
+  - Antigravity: conversations, workspace-bound resume, provider-default native compaction, model choices merged from local Antigravity settings, documented reasoning models, and observed CLI logs
 - Self-healing runtime: auto relogin with backoff after transient Discord/runtime failures
 - Workspace-level serialization so the same workspace is never executed concurrently across channels/bots
 - Two modes:
@@ -44,11 +44,11 @@ A standalone Discord bot that lets you direct **Codex CLI**, **Claude Code**, an
 - Install the CLI(s) you plan to use
   - Codex: `codex` available in shell, or set `CODEX_BIN=/absolute/path/to/codex`
   - Claude: `claude` available in shell, or set `CLAUDE_BIN=/absolute/path/to/claude`
-  - Gemini: `gemini` available in shell, or set `GEMINI_BIN=/absolute/path/to/gemini`
+  - Antigravity: `agy` available in shell, or set `ANTIGRAVITY_BIN=/absolute/path/to/agy`
 - If the CLI itself needs login, complete that in the CLI first; this project does not manage provider auth in `.env`
 - One or two Discord Application/Bot tokens
   - Shared mode: one bot token is enough
-  - Dedicated mode: use separate tokens for Codex, Claude, and Gemini bots
+  - Dedicated mode: use separate tokens for Codex, Claude, and Antigravity bots
 
 ## Quickstart
 
@@ -68,7 +68,7 @@ Git hooks note:
 
 Then in your Discord server, invite the bot. For a normal first run, start with `/cx_onboarding`, choose language/provider/workspace, then send the first task.
 
-Examples below use the default Codex/shared prefix `cx_`; a dedicated Claude bot defaults to `cc_`, a dedicated Gemini bot defaults to `gm_`, and all can be overridden with `SLASH_PREFIX`, `CODEX__SLASH_PREFIX`, `CLAUDE__SLASH_PREFIX`, or `GEMINI__SLASH_PREFIX`:
+Examples below use the default Codex/shared prefix `cx_`; a dedicated Claude bot defaults to `cc_`, a dedicated Antigravity bot defaults to `ag_`, and all can be overridden with `SLASH_PREFIX`, `CODEX__SLASH_PREFIX`, `CLAUDE__SLASH_PREFIX`, or `ANTIGRAVITY__SLASH_PREFIX`:
 
 - `/cx_status` — show current thread config
 - `/cx_settings` — open the interactive channel settings panel for provider, model, fast mode, effort, compact, mode, language, and workspace
@@ -105,10 +105,10 @@ Provider-native session aliases:
 
 - Codex: `/cx_rollout_sessions`, `/cx_rollout_resume`
 - Claude: `/cc_project_sessions`, `/cc_project_resume`
-- Gemini: `/gm_chat_sessions`, `/gm_chat_resume`
+- Antigravity: `/ag_conversation_sessions`, `/ag_conversation_resume`
 - The canonical `/cx_sessions`, `/cx_resume`, `!sessions`, and `!resume` still work; dedicated bots narrow the help text to the current provider's native terminology
 
-If you want **separate Discord bots** for Codex, Claude, and Gemini, keep everything in one `.env`, but group provider-specific values with clear prefixes:
+If you want **separate Discord bots** for Codex, Claude, and Antigravity, keep everything in one `.env`, but group provider-specific values with clear prefixes:
 
 ```bash
 # one-time setup
@@ -117,10 +117,10 @@ cp .env.example .env
 # start dedicated bots
 npm run start:codex
 npm run start:claude
-npm run start:gemini
+npm run start:antigravity
 ```
 
-Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, and `GEMINI__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. Each locked instance uses its own state files (`data/sessions.codex.json`, `data/sessions.claude.json`, `data/sessions.gemini.json`) and its own process lock, so channel/session context does not mix across bots.
+Use plain keys for shared Discord/runtime settings, then put dedicated bot settings under `CODEX__*`, `CLAUDE__*`, and `ANTIGRAVITY__*` sections in the same file. In practice, you usually only need `DISCORD_TOKEN`, optional `DEFAULT_MODEL`, optional `DEFAULT_MODE`, and optional CLI path overrides. Antigravity currently has no public `--model` launch flag, so this bridge applies Antigravity model choices through `~/.gemini/antigravity-cli/settings.json`; the model menu merges the current settings value, Antigravity's documented reasoning models, and models observed in local CLI logs. Each locked instance uses its own state files (`data/sessions.codex.json`, `data/sessions.claude.json`, `data/sessions.antigravity.json`) and its own process lock, so channel/session context does not mix across bots. Legacy `GEMINI__*`, `npm run start:gemini`, and `gm_` remain supported as compatibility names.
 
 ## Configuration (.env)
 
@@ -128,12 +128,12 @@ See `.env.example`.
 
 Important knobs:
 
-- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `GEMINI__ALLOWED_*`
+- `ALLOWED_CHANNEL_IDS` / `ALLOWED_USER_IDS`: lock the bot down (recommended); dedicated bots can also use `CODEX__ALLOWED_*` / `CLAUDE__ALLOWED_*` / `ANTIGRAVITY__ALLOWED_*`
 - Shared `.env` keys: Discord/runtime settings only (`ALLOWED_*`, `WORKSPACE_ROOT`, `DEFAULT_WORKSPACE_DIR`, proxy, etc.)
 - `CODEX__*`: Codex bot section in the same `.env` (normally `CODEX__DISCORD_TOKEN`, plus optional `CODEX__DEFAULT_MODEL`, `CODEX__DEFAULT_MODE`, `CODEX__DEFAULT_WORKSPACE_DIR`, `CODEX__MAX_INPUT_TOKENS_BEFORE_COMPACT`, `CODEX__CODEX_BIN`)
 - `CLAUDE__*`: Claude bot section in the same `.env` (normally `CLAUDE__DISCORD_TOKEN`, plus optional `CLAUDE__DEFAULT_MODEL`, `CLAUDE__DEFAULT_MODE`, `CLAUDE__DEFAULT_WORKSPACE_DIR`, `CLAUDE__CLAUDE_BIN`)
-- `GEMINI__*`: Gemini bot section in the same `.env` (normally `GEMINI__DISCORD_TOKEN`, plus optional `GEMINI__DEFAULT_MODEL`, `GEMINI__DEFAULT_MODE`, `GEMINI__DEFAULT_WORKSPACE_DIR`, `GEMINI__GEMINI_BIN`)
-- `BOT_PROVIDER`: leave empty for shared mode, or set `codex` / `claude` / `gemini` to lock one bot instance to a single provider; `npm run start:codex` / `npm run start:claude` / `npm run start:gemini` set this automatically
+- `ANTIGRAVITY__*`: Antigravity bot section in the same `.env` (normally `ANTIGRAVITY__DISCORD_TOKEN`, plus optional `ANTIGRAVITY__DEFAULT_MODE`, `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR`, `ANTIGRAVITY__SLASH_PREFIX`)
+- `BOT_PROVIDER`: leave empty for shared mode, or set `codex` / `claude` / `antigravity` to lock one bot instance to a single provider; `npm run start:codex` / `npm run start:claude` / `npm run start:antigravity` set this automatically
 - `ENV_FILE`: optional extra overlay file if you really need one, but the normal setup is now a single grouped `.env`
 - `DISCORD_TOKEN_CODEX` / `DISCORD_TOKEN_CLAUDE` / `DISCORD_TOKEN_GEMINI`: legacy fallback for older single-file setups
 - Provider auth is outside this project's config surface; keep CLI-specific login or secrets outside this `.env` unless you intentionally need them for your own runtime
@@ -146,18 +146,19 @@ Important knobs:
 - `ENABLE_CONFIG_CMD`: enable/disable `!config` command (default `false`)
 - `CONFIG_ALLOWLIST`: allowed keys for `!config key=value` (comma-separated, or `*` to allow all)
 - `SLASH_PREFIX`: shared/global slash prefix; default `cx` in shared mode (e.g. `/cx_status`)
-- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `GEMINI__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx` for Codex, `cc` for Claude, and `gm` for Gemini
+- `CODEX__SLASH_PREFIX` / `CLAUDE__SLASH_PREFIX` / `ANTIGRAVITY__SLASH_PREFIX`: dedicated-bot slash prefix overrides; defaults are `cx` for Codex, `cc` for Claude, and `ag` for Antigravity
 - `DEFAULT_UI_LANGUAGE`: default bot message language for new channels (`zh` or `en`, default `zh`)
 - `ONBOARDING_ENABLED_DEFAULT`: onboarding default for new channels (`true` or `false`, default `true`)
 - `DEFAULT_MODE`: `safe` or `dangerous`; the example `.env` now uses **`dangerous` by default** so local devs get full power out of the box. For shared / prod servers you should:
-  - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `GEMINI__DEFAULT_MODE` back to `safe` in `.env`, and only enable `/cx_mode dangerous` in trusted channels; or
+  - change `CODEX__DEFAULT_MODE` / `CLAUDE__DEFAULT_MODE` / `ANTIGRAVITY__DEFAULT_MODE` back to `safe` in `.env`, and only enable `/cx_mode dangerous` in trusted channels; or
   - run the bot in a private guild where you trust all members
 - `DEFAULT_WORKSPACE_DIR`: optional shared default workspace for all providers
-- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `GEMINI__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
+- `CODEX__DEFAULT_WORKSPACE_DIR` / `CLAUDE__DEFAULT_WORKSPACE_DIR` / `ANTIGRAVITY__DEFAULT_WORKSPACE_DIR`: provider-specific default workspaces that override the shared default
 - `CHILD_THREAD_WORKSPACE_MODE`: child thread workspace strategy; `inherit` reuses the parent channel's explicit workspace, while `separate` makes each child thread use its own provider default or `WORKSPACE_ROOT/<threadId>` fallback
 - `WORKSPACE_ROOT`: legacy fallback root used only when neither thread override nor provider default is configured
 - `CODEX_BIN`: codex command/path (default `codex`)
 - `CLAUDE_BIN`: claude command/path (default `claude`)
+- `ANTIGRAVITY_BIN`: agy command/path (default `agy`; `GEMINI_BIN` still works as a legacy fallback)
 - Codex provider defaults for `model`, `effort`, and `fast mode` are read from `~/.codex/config.toml`; unless `[features].fast_mode = false` is set explicitly, fast mode defaults to on, and channel-level `!model`, `!effort`, and `!fast` only override the current thread
 - `CODEX_TIMEOUT_MS`: default runner hard timeout (ms). Today all three providers share this default; `0` disables timeout, and `/cx_timeout` / `!timeout` can still override it per thread.
 - `PROGRESS_UPDATES_ENABLED`: enable/disable live progress updates in channel (default `true`)
@@ -236,7 +237,7 @@ Default IDs:
 If you manage bot services manually:
 
 - The runtime now blocks dangerous `launchctl` operations for protected bot labels, or rewrites them to a safe restart helper
-- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|gemini|all>`
+- Prefer `scripts/restart-discord-bot-service.sh <codex|claude|antigravity|all>`
 
 Check service and logs:
 
@@ -338,7 +339,7 @@ npm run send:channel -- --channel 1487823042121040036 --content "hello" --provid
 Notes:
 
 - By default it reuses the current `.env` Discord token, proxy settings, and `BOT_PROVIDER`
-- Use `--provider shared|codex|claude|gemini` to choose a specific token group
+- Use `--provider shared|codex|claude|antigravity` to choose a specific token group
 - Choose exactly one content source: `--content`, `--content-file`, or `--stdin`
 
 ## Standalone runtime notes

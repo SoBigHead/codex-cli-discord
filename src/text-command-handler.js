@@ -362,7 +362,7 @@ export function createTextCommandHandler({
         }
         const requested = parseProviderInput(arg);
         if (!requested) {
-          await safeReply(message, '用法：`!provider <codex|claude|gemini|status>`');
+          await safeReply(message, '用法：`!provider <codex|claude|antigravity|status>`（legacy: gemini）');
           break;
         }
         const { previous } = commandActions.setProvider(session, requested);

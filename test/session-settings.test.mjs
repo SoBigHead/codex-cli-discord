@@ -24,6 +24,7 @@ import {
   parseReasoningEffortInput,
   parseWorkspaceCommandAction,
 } from '../src/session-settings.js';
+import { normalizeProvider as testNormalizeProvider } from '../src/provider-metadata.js';
 
 test('session-settings normalizes ui language labels and fallbacks', () => {
   const settings = createSessionSettings({ defaultUiLanguage: 'en' });
@@ -153,7 +154,7 @@ test('session-settings lets thread fast mode inherit the parent channel provider
   const settings = createSessionSettings({
     getParentSession: () => parentSession,
     readCodexDefaults: () => ({ model: 'gpt-5.4', effort: 'high', fastMode: false }),
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    normalizeProvider: testNormalizeProvider,
   });
 
   assert.deepEqual(settings.resolveFastModeSetting({
@@ -333,7 +334,7 @@ test('session-settings resolves Claude runtime mode from session, parent, and en
     claudeRuntimeMode: 'normal',
     codexRuntimeMode: 'normal',
     getParentSession: () => parentSession,
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    normalizeProvider: testNormalizeProvider,
   });
 
   assert.deepEqual(settings.resolveRuntimeModeSetting({ provider: 'claude', runtimeMode: 'normal' }), {
@@ -370,7 +371,7 @@ test('session-settings resolves Claude runtime mode from session, parent, and en
 
 test('session-settings defaults Claude runtime to normal dash-p mode', () => {
   const settings = createSessionSettings({
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    normalizeProvider: testNormalizeProvider,
   });
 
   assert.deepEqual(settings.resolveRuntimeModeSetting({ provider: 'claude', runtimeMode: null }), {
@@ -398,7 +399,7 @@ test('session-settings resolves busy prompt mode with fail-closed steering const
   const settings = createSessionSettings({
     claudeRuntimeMode: 'long',
     getParentSession: () => parentSession,
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    normalizeProvider: testNormalizeProvider,
   });
 
   assert.deepEqual(settings.resolveBusyPromptModeSetting({ provider: 'claude', runtimeMode: 'normal', busyPromptMode: 'steer' }), {
@@ -443,7 +444,7 @@ test('session-settings resolves reply delivery from session, parent channel, and
   const settings = createSessionSettings({
     defaultReplyDeliveryMode: 'card_mention',
     getParentSession: () => parentSession,
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    normalizeProvider: testNormalizeProvider,
   });
 
   assert.equal(normalizeReplyDeliveryMode('stream_only'), 'stream_only');
@@ -546,7 +547,14 @@ test('session-settings provides compact descriptions and provider defaults', () 
   const warnings = [];
   const settings = createSessionSettings({
     readCodexDefaults: () => ({ model: 'gpt-5-codex', effort: 'high', fastMode: true }),
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    readAntigravityDefaults: () => ({
+      model: 'Claude Opus 4.6 (Thinking)',
+      modelConfigured: true,
+      source: 'settings.json',
+      settingsPath: '/tmp/agy-settings.json',
+      error: null,
+    }),
+    normalizeProvider: testNormalizeProvider,
     getSupportedCompactStrategies: () => ['hard', 'native', 'off'],
   });
 
@@ -567,16 +575,21 @@ test('session-settings provides compact descriptions and provider defaults', () 
     source: 'config.toml',
   });
   assert.deepEqual(settings.getProviderDefaults('gemini'), {
-    model: null,
+    model: 'Claude Opus 4.6 (Thinking)',
+    modelConfigured: true,
     profile: null,
     profileConfigured: false,
     effort: null,
+    effortConfigured: false,
     fastMode: false,
-    source: 'provider',
+    fastModeConfigured: false,
+    source: 'settings.json',
+    settingsPath: '/tmp/agy-settings.json',
+    error: null,
   });
 });
 
-test('session-settings uses DEFAULT_MODEL as the resolved provider model fallback', () => {
+test('session-settings uses DEFAULT_MODEL only where the provider supports shared fallback', () => {
   const settings = createSessionSettings({
     defaultModel: 'gpt-5.4',
     readCodexDefaults: () => ({
@@ -586,7 +599,13 @@ test('session-settings uses DEFAULT_MODEL as the resolved provider model fallbac
       effortConfigured: false,
       fastMode: true,
     }),
-    normalizeProvider: (provider) => String(provider || '').trim().toLowerCase() || 'codex',
+    readAntigravityDefaults: () => ({
+      model: null,
+      modelConfigured: false,
+      source: 'provider',
+      error: null,
+    }),
+    normalizeProvider: testNormalizeProvider,
   });
 
   assert.deepEqual(settings.resolveModelSetting({ provider: 'codex', model: null }), {
@@ -594,15 +613,64 @@ test('session-settings uses DEFAULT_MODEL as the resolved provider model fallbac
     source: 'env default',
   });
   assert.deepEqual(settings.resolveModelSetting({ provider: 'gemini', model: null }), {
-    value: 'gpt-5.4',
-    source: 'env default',
+    value: null,
+    source: 'provider',
   });
   assert.deepEqual(settings.getProviderDefaults('gemini'), {
-    model: 'gpt-5.4',
+    model: null,
+    modelConfigured: false,
     profile: null,
     profileConfigured: false,
     effort: null,
+    effortConfigured: false,
     fastMode: false,
-    source: 'env default',
+    fastModeConfigured: false,
+    source: 'provider',
+    settingsPath: null,
+    error: null,
+  });
+});
+
+test('session-settings resolves Antigravity model from session parent and settings.json', () => {
+  const parentSession = {
+    provider: 'gemini',
+    providers: {
+      gemini: {
+        model: 'Gemini 3.5 Flash (High)',
+      },
+    },
+  };
+  const settings = createSessionSettings({
+    getParentSession: () => parentSession,
+    readAntigravityDefaults: () => ({
+      model: 'Claude Opus 4.6 (Thinking)',
+      modelConfigured: true,
+      source: 'settings.json',
+      error: null,
+    }),
+    normalizeProvider: testNormalizeProvider,
+  });
+
+  assert.deepEqual(settings.resolveModelSetting({ provider: 'gemini', model: 'Gemini 3.5 Pro' }), {
+    value: 'Gemini 3.5 Pro',
+    source: 'session override',
+  });
+  assert.deepEqual(settings.resolveModelSetting({ provider: 'gemini', model: null, parentChannelId: 'parent-1' }), {
+    value: 'Gemini 3.5 Flash (High)',
+    source: 'parent channel',
+  });
+
+  const providerSettings = createSessionSettings({
+    readAntigravityDefaults: () => ({
+      model: 'Claude Opus 4.6 (Thinking)',
+      modelConfigured: true,
+      source: 'settings.json',
+      error: null,
+    }),
+    normalizeProvider: testNormalizeProvider,
+  });
+  assert.deepEqual(providerSettings.resolveModelSetting({ provider: 'gemini', model: null }), {
+    value: 'Claude Opus 4.6 (Thinking)',
+    source: 'settings.json',
   });
 });

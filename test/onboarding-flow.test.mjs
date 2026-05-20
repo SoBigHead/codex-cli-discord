@@ -73,7 +73,8 @@ function createFlow({
     getProviderDisplayName: (provider) => ({
       codex: 'Codex CLI',
       claude: 'Claude Code',
-      gemini: 'Gemini CLI',
+      antigravity: 'Antigravity CLI',
+      gemini: 'Antigravity CLI',
     }[provider] || provider),
     getCliHealth: (provider) => ({ ok: true, version: '1.2.3', bin: provider }),
     resolveSecurityContext: () => ({ mentionOnly: false }),
@@ -148,14 +149,14 @@ test('createOnboardingFlow builds provider buttons in shared mode', () => {
   assert.equal(rows.length, 2);
   assert.deepEqual(
     rows[1].components.map((component) => component.data.label),
-    ['codex', 'claude', 'gemini'],
+    ['codex', 'claude', 'antigravity'],
   );
   assert.equal(rows[1].components[1].data.style, ButtonStyle.Primary);
 });
 
 test('createOnboardingFlow hides provider buttons when bot provider is locked', () => {
-  const session = { language: 'zh', provider: 'gemini', onboardingEnabled: true };
-  const flow = createFlow({ session, botProvider: 'gemini' });
+  const session = { language: 'zh', provider: 'antigravity', onboardingEnabled: true };
+  const flow = createFlow({ session, botProvider: 'antigravity' });
 
   const rows = flow.buildOnboardingActionRows(2, 'thread-1', '12345', session, 'zh');
   const report = flow.formatOnboardingStepReport(2, 'thread-1', session, { id: 'thread-1' }, 'zh');
@@ -178,7 +179,7 @@ test('createOnboardingFlow updates provider through button interaction', async (
   });
 
   await flow.handleOnboardingButtonInteraction({
-    customId: 'onb:set_provider:2:12345:gemini',
+    customId: 'onb:set_provider:2:12345:antigravity',
     channelId: 'thread-1',
     user: { id: '12345' },
     channel: { id: 'thread-1' },
@@ -190,9 +191,9 @@ test('createOnboardingFlow updates provider through button interaction', async (
     },
   });
 
-  assert.equal(session.provider, 'gemini');
+  assert.equal(session.provider, 'antigravity');
   assert.equal(updates.length, 1);
-  assert.match(updates[0].content, /Gemini CLI/);
+  assert.match(updates[0].content, /Antigravity CLI/);
 });
 
 test('createOnboardingFlow opens workspace browser in a separate reply', async () => {

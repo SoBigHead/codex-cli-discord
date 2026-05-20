@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import readline from 'node:readline';
+import { applyCodexOpenAICuratedMarketplaceConfig } from './codex-marketplaces.js';
 
 function normalizeText(value) {
   const text = String(value || '').trim();
@@ -80,6 +81,8 @@ export function buildCodexLongConfig({
   if (compactSetting.strategy === 'native' && compactEnabled.enabled) {
     setConfigPath(config, 'model_auto_compact_token_limit', nativeLimit.tokens);
   }
+
+  applyCodexOpenAICuratedMarketplaceConfig(config);
 
   return Object.keys(config).length ? config : null;
 }

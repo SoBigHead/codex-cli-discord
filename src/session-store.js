@@ -234,6 +234,9 @@ export function createSessionStore({
       provider: session.provider,
       hydrateFromTopLevel: !providerStateReady,
     });
+    if (ensuredProviderState.changed) {
+      migrated = true;
+    }
     if (session.provider !== ensuredProviderState.provider) {
       session.provider = ensuredProviderState.provider;
       migrated = true;
@@ -753,11 +756,10 @@ export function createSessionStore({
 }
 
 function loadDb(dataFile) {
+  if (!fs.existsSync(dataFile)) return { threads: {} };
   try {
-    if (!fs.existsSync(dataFile)) return { threads: {} };
     return JSON.parse(fs.readFileSync(dataFile, 'utf8'));
   } catch (err) {
-    console.error('Failed to load DB, using empty state:', err);
-    return { threads: {} };
+    throw new Error(`Failed to load session DB ${dataFile}: ${err?.message || err}`);
   }
 }

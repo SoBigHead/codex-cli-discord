@@ -34,13 +34,14 @@ test('buildSpawnEnv prepends the launchctl guard and appends common executable l
 test('getProviderBin respects configured provider bins', () => {
   assert.equal(getProviderBin('codex', { codexBin: '/bin/codex-custom' }), '/bin/codex-custom');
   assert.equal(getProviderBin('claude', { claudeBin: '/bin/claude-custom' }), '/bin/claude-custom');
-  assert.equal(getProviderBin('gemini', { geminiBin: '/bin/gemini-custom' }), '/bin/gemini-custom');
+  assert.equal(getProviderBin('antigravity', { antigravityBin: '/bin/agy-custom' }), '/bin/agy-custom');
+  assert.equal(getProviderBin('gemini', { legacyGeminiBin: '/bin/agy-legacy' }), '/bin/agy-legacy');
 });
 
 test('formatCliHealth renders not-found and success states', () => {
-  assert.equal(isCliNotFound('spawn gemini ENOENT'), true);
-  assert.match(formatCliHealth({ ok: false, bin: 'gemini', envKey: 'GEMINI_BIN', error: 'spawn gemini ENOENT' }, 'en'), /GEMINI_BIN/);
-  assert.equal(formatCliHealth({ ok: true, bin: 'gemini', version: '0.33.1' }, 'zh'), '✅ `gemini` (0.33.1)');
+  assert.equal(isCliNotFound('spawn agy ENOENT'), true);
+  assert.match(formatCliHealth({ ok: false, bin: 'agy', envKey: 'ANTIGRAVITY_BIN', error: 'spawn agy ENOENT' }, 'en'), /ANTIGRAVITY_BIN/);
+  assert.equal(formatCliHealth({ ok: true, bin: 'agy', version: '1.0.0' }, 'zh'), '✅ `agy` (1.0.0)');
 });
 
 test('getCodexAccountRateLimits reads official app-server rate limit response', async () => {

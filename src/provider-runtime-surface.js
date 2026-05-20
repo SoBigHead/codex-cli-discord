@@ -74,30 +74,30 @@ const PROVIDER_RUNTIME_SURFACES = Object.freeze({
       zh: 'CLI 没有暴露稳定的 raw config passthrough',
     }),
   }),
-  gemini: Object.freeze({
+  antigravity: Object.freeze({
     sessionTerm: Object.freeze({
-      en: Object.freeze({ singular: 'chat session', plural: 'chat sessions' }),
-      zh: Object.freeze({ singular: 'chat session', plural: 'chat sessions' }),
+      en: Object.freeze({ singular: 'conversation', plural: 'conversations' }),
+      zh: Object.freeze({ singular: 'conversation', plural: 'conversations' }),
     }),
     recentSessionsTitle: Object.freeze({
-      en: 'Recent Gemini Chat Sessions',
-      zh: '最近 Gemini Chat Sessions',
+      en: 'Recent Antigravity Conversations',
+      zh: '最近 Antigravity Conversations',
     }),
     recentSessionsLookup: Object.freeze({
-      en: 'prefers current workspace in `~/.gemini/tmp/<project>/chats`, then scans other Gemini project caches',
-      zh: '优先读取当前 workspace 对应的 `~/.gemini/tmp/<project>/chats`，再扫描其他 Gemini project cache',
+      en: 'current workspace mapping in `~/.gemini/antigravity-cli/cache/last_conversations.json`',
+      zh: '当前 workspace 对应的 `~/.gemini/antigravity-cli/cache/last_conversations.json` 映射',
     }),
     runtimeSummary: Object.freeze({
-      en: 'workspace chat sessions, workspace-bound resume, provider-default native compaction',
-      zh: 'workspace chat sessions、workspace 绑定 resume、provider 默认 native 压缩',
+      en: 'workspace conversations, workspace-bound resume, provider-default native compaction',
+      zh: 'workspace conversations、workspace 绑定 resume、provider 默认 native 压缩',
     }),
     sessionStore: Object.freeze({
-      en: 'project chat snapshots (`~/.gemini/tmp/<project>/chats`)',
-      zh: 'project chat 快照（`~/.gemini/tmp/<project>/chats`）',
+      en: 'Antigravity CLI cache (`~/.gemini/antigravity-cli`)',
+      zh: 'Antigravity CLI cache（`~/.gemini/antigravity-cli`）',
     }),
     resumeSurface: Object.freeze({
-      en: 'workspace chat resume; workspace changes reset the bound session',
-      zh: '按 workspace chat 恢复；切换 workspace 时会重置已绑定 session',
+      en: 'conversation resume; workspace changes reset the bound conversation',
+      zh: '按 conversation 恢复；切换 workspace 时会重置已绑定 conversation',
     }),
     nativeCompactSurface: Object.freeze({
       en: 'provider-native compaction; no exposed native limit override',

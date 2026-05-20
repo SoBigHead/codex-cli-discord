@@ -380,6 +380,18 @@ export function createSessionSettings({
     fastMode: true,
     fastModeConfigured: false,
   }),
+  readAntigravityDefaults = () => ({
+    model: null,
+    modelConfigured: false,
+    profile: null,
+    profileConfigured: false,
+    effort: null,
+    effortConfigured: false,
+    fastMode: false,
+    fastModeConfigured: false,
+    source: 'provider',
+    error: null,
+  }),
   readCodexProfileCatalog = () => ({ profiles: [], configPath: '' }),
   normalizeProvider = (provider) => String(provider || '').trim().toLowerCase() || 'codex',
   getSupportedCompactStrategies = () => ['hard', 'native', 'off'],
@@ -397,6 +409,14 @@ export function createSessionSettings({
     const state = session.providers?.[normalizedProvider];
     if (state && typeof state === 'object' && !Array.isArray(state) && field in state) {
       return state[field];
+    }
+    if (session.providers && typeof session.providers === 'object' && !Array.isArray(session.providers)) {
+      for (const [providerKey, providerState] of Object.entries(session.providers)) {
+        if (normalizeProvider(providerKey) !== normalizedProvider) continue;
+        if (providerState && typeof providerState === 'object' && !Array.isArray(providerState) && field in providerState) {
+          return providerState[field];
+        }
+      }
     }
     if (normalizeProvider(session.provider) === normalizedProvider) {
       return session[field];
@@ -580,6 +600,16 @@ export function createSessionSettings({
         return { value: defaultModelValue, source: 'env default' };
       }
       return { value: null, source: 'provider' };
+    }
+
+    if (provider === 'antigravity') {
+      const antigravityDefaults = readAntigravityDefaults() || {};
+      const value = String(antigravityDefaults.model ?? '').trim();
+      const configured = antigravityDefaults.modelConfigured ?? Boolean(value);
+      if (configured && value) {
+        return { value, source: antigravityDefaults.source || 'settings.json' };
+      }
+      return { value: null, source: antigravityDefaults.source || 'provider' };
     }
 
     if (defaultModelValue) {
@@ -827,7 +857,25 @@ export function createSessionSettings({
   }
 
   function getProviderDefaults(provider) {
-    if (normalizeProvider(provider) !== 'codex') {
+    const normalizedProvider = normalizeProvider(provider);
+    if (normalizedProvider === 'antigravity') {
+      const antigravityDefaults = readAntigravityDefaults() || {};
+      return {
+        model: antigravityDefaults.model || null,
+        modelConfigured: Boolean(antigravityDefaults.modelConfigured && antigravityDefaults.model),
+        profile: null,
+        profileConfigured: false,
+        effort: null,
+        effortConfigured: false,
+        fastMode: false,
+        fastModeConfigured: false,
+        source: antigravityDefaults.source || (antigravityDefaults.model ? 'settings.json' : 'provider'),
+        settingsPath: antigravityDefaults.settingsPath || null,
+        error: antigravityDefaults.error || null,
+      };
+    }
+
+    if (normalizedProvider !== 'codex') {
       const defaultModelValue = getDefaultModelValue();
       return {
         model: defaultModelValue || null,

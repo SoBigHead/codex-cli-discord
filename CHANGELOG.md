@@ -6,6 +6,9 @@ The format is based on Keep a Changelog and this project follows Semantic Versio
 
 ## [Unreleased]
 
+### Added
+- Added Antigravity CLI provider support with canonical `antigravity` naming, `agy` launch support, legacy Gemini compatibility, settings-backed model updates, and documented reasoning-model choices in the model menu.
+
 ### Changed
 - Kept `/goal` as one slash command with action choices while opening required modals for `set` and `budget` inputs.
 

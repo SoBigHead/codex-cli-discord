@@ -57,6 +57,43 @@ test('loadRuntimeEnv respects shell env priority over provider-scoped keys', () 
   assert.equal(path.basename(result.writableEnvFile), '.env');
 });
 
+test('loadRuntimeEnv lets antigravity scoped keys shadow legacy gemini scoped keys', () => {
+  const rootDir = makeTempRoot();
+  fs.writeFileSync(
+    path.join(rootDir, '.env'),
+    [
+      'BOT_PROVIDER=antigravity',
+      'GEMINI__DEFAULT_WORKSPACE_DIR=/legacy',
+      'ANTIGRAVITY__DEFAULT_WORKSPACE_DIR=/canonical',
+    ].join('\n'),
+  );
+
+  const env = {};
+  const result = loadRuntimeEnv({ rootDir, env });
+
+  assert.equal(result.appliedProviderScope, 'antigravity');
+  assert.equal(env.BOT_PROVIDER, 'antigravity');
+  assert.equal(env.DEFAULT_WORKSPACE_DIR, '/canonical');
+});
+
+test('loadRuntimeEnv still applies legacy gemini scope for antigravity when canonical key is absent', () => {
+  const rootDir = makeTempRoot();
+  fs.writeFileSync(
+    path.join(rootDir, '.env'),
+    [
+      'BOT_PROVIDER=gemini',
+      'GEMINI__DEFAULT_WORKSPACE_DIR=/legacy',
+    ].join('\n'),
+  );
+
+  const env = {};
+  const result = loadRuntimeEnv({ rootDir, env });
+
+  assert.equal(result.appliedProviderScope, 'antigravity');
+  assert.equal(env.BOT_PROVIDER, 'gemini');
+  assert.equal(env.DEFAULT_WORKSPACE_DIR, '/legacy');
+});
+
 test('loadRuntimeEnv still respects explicit ENV_FILE overlays', () => {
   const rootDir = makeTempRoot();
   fs.writeFileSync(path.join(rootDir, '.env'), ['BOT_PROVIDER=codex', 'CODEX__DEFAULT_MODEL=o3'].join('\n'));

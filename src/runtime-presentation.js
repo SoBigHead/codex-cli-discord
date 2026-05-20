@@ -127,15 +127,15 @@ export function createRuntimePresentation({
 
   function formatPermissionsLabel(session, language = 'en') {
     const provider = getSessionProvider(session);
-    if (provider === 'gemini') {
+    if (provider === 'antigravity') {
       if (session.mode === 'dangerous') {
         return language === 'en'
-          ? 'full access (--yolo)'
-          : '完全权限（--yolo）';
+          ? 'full access (--dangerously-skip-permissions)'
+          : '完全权限（--dangerously-skip-permissions）';
       }
       return language === 'en'
-        ? 'sandboxed (--sandbox --approval-mode default)'
-        : '沙盒模式（--sandbox --approval-mode default）';
+        ? 'sandboxed (--sandbox)'
+        : '沙盒模式（--sandbox）';
     }
     if (provider === 'claude') {
       if (session.mode === 'dangerous') {

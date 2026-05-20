@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 
 import { createRunnerArgsBuilder, uniqueDirs } from '../src/runner-args.js';
 
+process.env.CODEX_OPENAI_CURATED_MARKETPLACE_SOURCE = '/tmp/agents-in-discord-missing-openai-curated-marketplace';
+
 test('uniqueDirs removes blanks and duplicates while keeping order', () => {
   assert.deepEqual(
     uniqueDirs([' /repo/a ', '', null, '/repo/b', '/repo/a', '  ', '/repo/b']),
@@ -35,12 +37,8 @@ test('createRunnerArgsBuilder builds gemini args instead of codex args', () => {
   });
 
   assert.deepEqual(args, [
-    '--output-format',
-    'stream-json',
-    '--yolo',
-    '--model',
-    'gemini-2.5-pro',
-    '--resume',
+    '--dangerously-skip-permissions',
+    '--conversation',
     'sess-gm-1',
     '--prompt',
     'summarize the repo',

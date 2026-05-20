@@ -29,8 +29,8 @@ test('runtime presentation formats runtime/session/permission labels', () => {
     '**demo** (`sess-1`)',
   );
   assert.equal(
-    presentation.formatPermissionsLabel({ provider: 'gemini', mode: 'dangerous' }, 'en'),
-    'full access (--yolo)',
+    presentation.formatPermissionsLabel({ provider: 'antigravity', mode: 'dangerous' }, 'en'),
+    'full access (--dangerously-skip-permissions)',
   );
   assert.equal(
     presentation.formatPermissionsLabel({ provider: 'claude', mode: 'safe' }, 'zh'),

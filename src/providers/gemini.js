@@ -1,17 +1,11 @@
-import { getProviderCapabilities, getProviderDisplayName } from '../provider-metadata.js';
+import { createAntigravityProviderAdapter } from './antigravity.js';
 
+// Legacy shim for imports that still reference the historical Gemini provider module.
 export function createGeminiProviderAdapter({
   buildArgs = () => [],
   parseEvent = () => {},
 } = {}) {
-  return {
-    id: 'gemini',
-    displayName: getProviderDisplayName('gemini'),
-    capabilities: getProviderCapabilities('gemini'),
-    runtime: {
-      buildArgs,
-      parseEvent,
-    },
-  };
+  return createAntigravityProviderAdapter({ buildArgs, parseEvent });
 }
 
+export { createAntigravityProviderAdapter };

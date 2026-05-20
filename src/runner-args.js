@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { buildCodexPermissionArgs } from './codex-permissions.js';
+import { buildCodexOpenAICuratedMarketplaceArgs } from './codex-marketplaces.js';
 import { createClaudeProviderAdapter } from './providers/claude.js';
 import { createCodexProviderAdapter } from './providers/codex.js';
-import { createGeminiProviderAdapter } from './providers/gemini.js';
+import { createAntigravityProviderAdapter } from './providers/antigravity.js';
 import { createProviderAdapterRegistry } from './providers/index.js';
 
 export function uniqueDirs(dirs = []) {
@@ -62,8 +63,8 @@ export function createRunnerArgsBuilder({
         systemPrompt,
       }),
     }),
-    createGeminiProviderAdapter({
-      buildArgs: ({ session, prompt, systemPrompt = '' }) => buildGeminiArgs({ session, prompt, systemPrompt }),
+    createAntigravityProviderAdapter({
+      buildArgs: ({ session, prompt, systemPrompt = '' }) => buildAntigravityArgs({ session, prompt, systemPrompt }),
     }),
   ]);
 
@@ -103,7 +104,7 @@ export function createRunnerArgsBuilder({
       || fastMode.source === 'parent channel'
       || fastMode.enabled === false;
 
-    const common = ['--enable', 'goals'];
+    const common = ['--enable', 'goals', ...buildCodexOpenAICuratedMarketplaceArgs()];
     if (systemText) common.push('-c', `developer_instructions=${tomlString(systemText)}`);
     if (codexProfile?.isExplicit) {
       if (!codexProfile.valid) {
@@ -171,20 +172,18 @@ export function createRunnerArgsBuilder({
     return args;
   }
 
-  function buildGeminiArgs({ session, prompt, systemPrompt = '' }) {
-    const args = ['--output-format', 'stream-json'];
-    const model = resolveModelSetting(session).value || defaultModel;
+  function buildAntigravityArgs({ session, prompt, systemPrompt = '' }) {
+    const args = [];
     const sessionId = getSessionId(session);
     const promptText = composePromptWithSystemFallback(prompt, systemPrompt);
 
     if (session.mode === 'dangerous') {
-      args.push('--yolo');
+      args.push('--dangerously-skip-permissions');
     } else {
-      args.push('--sandbox', '--approval-mode', 'default');
+      args.push('--sandbox');
     }
 
-    if (model) args.push('--model', model);
-    if (sessionId) args.push('--resume', sessionId);
+    if (sessionId) args.push('--conversation', sessionId);
     args.push('--prompt', promptText);
     return args;
   }
@@ -193,6 +192,7 @@ export function createRunnerArgsBuilder({
     buildSessionRunnerArgs,
     buildCodexArgs,
     buildClaudeArgs,
-    buildGeminiArgs,
+    buildAntigravityArgs,
+    buildGeminiArgs: buildAntigravityArgs,
   };
 }

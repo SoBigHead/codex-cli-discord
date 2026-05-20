@@ -125,16 +125,18 @@ export function buildSpawnEnv(env) {
   return out;
 }
 
-export function getProviderBin(provider, {
-  codexBin = 'codex',
-  claudeBin = 'claude',
-  geminiBin = 'gemini',
-} = {}) {
+export function getProviderBin(provider, options = {}) {
+  const {
+    codexBin = 'codex',
+    claudeBin = 'claude',
+    legacyGeminiBin = '',
+  } = options;
+  const antigravityBin = options.antigravityBin || legacyGeminiBin || 'agy';
   switch (normalizeProvider(provider)) {
     case 'claude':
       return claudeBin;
-    case 'gemini':
-      return geminiBin;
+    case 'antigravity':
+      return antigravityBin;
     default:
       return codexBin;
   }
@@ -179,17 +181,20 @@ function getCliHealthForBin({
   };
 }
 
-export function getCliHealth(provider, {
-  codexBin = 'codex',
-  claudeBin = 'claude',
-  geminiBin = 'gemini',
-  spawnEnv = process.env,
-  safeError,
-} = {}) {
+export function getCliHealth(provider, options = {}) {
+  const {
+    codexBin = 'codex',
+    claudeBin = 'claude',
+    antigravityBin,
+    legacyGeminiBin,
+    spawnEnv = process.env,
+    safeError,
+  } = options;
   const bin = getProviderBin(provider, {
     codexBin,
     claudeBin,
-    geminiBin,
+    antigravityBin,
+    legacyGeminiBin,
   });
   return getCliHealthForBin({
     bin,

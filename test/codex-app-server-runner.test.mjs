@@ -4,7 +4,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { createCodexAppServerRunner } from '../src/codex-app-server-runner.js';
+import { buildCodexLongConfig, createCodexAppServerRunner } from '../src/codex-app-server-runner.js';
 
 function waitFor(check, { timeoutMs = 1000, intervalMs = 10 } = {}) {
   return new Promise((resolve, reject) => {
@@ -103,6 +103,26 @@ function createFakeAppServerSpawn({ autoComplete = true, failSteer = false, fail
 
   return { spawnFn, calls, writes, child, completeTurn };
 }
+
+test('buildCodexLongConfig pins openai-curated marketplace to local cache when present', () => {
+  const previous = process.env.CODEX_OPENAI_CURATED_MARKETPLACE_SOURCE;
+  process.env.CODEX_OPENAI_CURATED_MARKETPLACE_SOURCE = '/tmp';
+  try {
+    const config = buildCodexLongConfig({
+      session: {},
+      resolveFastModeSetting: () => ({ enabled: false, source: 'config.toml' }),
+      resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+      resolveCompactEnabledSetting: () => ({ enabled: false }),
+      resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    });
+
+    assert.equal(config.marketplaces['openai-curated'].source_type, 'local');
+    assert.equal(config.marketplaces['openai-curated'].source, '/tmp');
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_OPENAI_CURATED_MARKETPLACE_SOURCE;
+    else process.env.CODEX_OPENAI_CURATED_MARKETPLACE_SOURCE = previous;
+  }
+});
 
 test('createCodexAppServerRunner runs a turn over persistent app-server and closes after idle', async () => {
   const fake = createFakeAppServerSpawn();

@@ -8,14 +8,15 @@ import {
   extractAgentMessageText,
   isFinalAnswerLikeAgentMessage,
 } from '../src/codex-event-utils.js';
+import { normalizeProvider as testNormalizeProvider } from '../src/provider-metadata.js';
 
-test('createRunnerExecutor builds gemini args instead of codex args', () => {
+test('createRunnerExecutor builds Antigravity args instead of codex args', () => {
   const executor = createRunnerExecutor({
     spawnEnv: process.env,
     ensureDir: () => {},
-    normalizeProvider: (value) => value,
+    normalizeProvider: testNormalizeProvider,
     getSessionProvider: (session) => session.provider,
-    getProviderBin: () => 'gemini',
+    getProviderBin: () => 'agy',
     getSessionId: (session) => session.runnerSessionId,
     resolveModelSetting: (session) => ({ value: session.model || null, source: session.model ? 'session override' : 'provider' }),
     resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
@@ -32,9 +33,9 @@ test('createRunnerExecutor builds gemini args instead of codex args', () => {
   });
 
   const args = executor.buildSessionRunnerArgs({
-    provider: 'gemini',
+    provider: 'antigravity',
     session: {
-      provider: 'gemini',
+      provider: 'antigravity',
       mode: 'dangerous',
       model: 'gemini-2.5-pro',
       runnerSessionId: 'sess-gm-1',
@@ -44,16 +45,117 @@ test('createRunnerExecutor builds gemini args instead of codex args', () => {
   });
 
   assert.deepEqual(args, [
-    '--output-format',
-    'stream-json',
-    '--yolo',
-    '--model',
-    'gemini-2.5-pro',
-    '--resume',
+    '--dangerously-skip-permissions',
+    '--conversation',
     'sess-gm-1',
     '--prompt',
     'summarize the repo',
   ]);
+});
+
+test('createRunnerExecutor reads Antigravity stdout and conversation id', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'agy',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: () => ({ value: null, source: 'provider' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    readGeminiSessionState: () => ({
+      sessionId: 'agy-conversation-1',
+      messages: [],
+      finalAnswer: '',
+      usage: null,
+    }),
+    spawnFn: () => {
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from('Antigravity done\n'));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'antigravity', mode: 'safe' },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.threadId, 'agy-conversation-1');
+  assert.deepEqual(result.finalAnswerMessages, ['Antigravity done']);
+});
+
+test('createRunnerExecutor applies Antigravity model setting before spawning', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.killed = false;
+  const applied = [];
+  let spawned = false;
+
+  const executor = createRunnerExecutor({
+    spawnEnv: process.env,
+    ensureDir: () => {},
+    normalizeProvider: testNormalizeProvider,
+    getSessionProvider: (session) => session.provider,
+    getProviderBin: () => 'agy',
+    getSessionId: (session) => session.runnerSessionId,
+    resolveModelSetting: (session) => ({ value: session.model || null, source: 'session override' }),
+    resolveReasoningEffortSetting: () => ({ value: null, source: 'provider' }),
+    resolveTimeoutSetting: () => ({ timeoutMs: 0 }),
+    resolveCompactStrategySetting: () => ({ strategy: 'hard' }),
+    resolveCompactEnabledSetting: () => ({ enabled: false }),
+    resolveNativeCompactTokenLimitSetting: () => ({ tokens: 0 }),
+    applyProviderModelSetting(input) {
+      assert.equal(spawned, false);
+      applied.push(input);
+    },
+    normalizeTimeoutMs: (value) => Number(value || 0),
+    safeError: (err) => String(err?.message || err),
+    stopChildProcess: () => {},
+    startSessionProgressBridge: () => () => {},
+    extractAgentMessageText,
+    isFinalAnswerLikeAgentMessage,
+    readGeminiSessionState: () => null,
+    spawnFn: () => {
+      spawned = true;
+      setImmediate(() => {
+        child.stdout.emit('data', Buffer.from('done\n'));
+        child.emit('close', 0, null);
+      });
+      return child;
+    },
+  });
+
+  const result = await executor.runProviderTask({
+    session: { provider: 'antigravity', mode: 'safe', model: 'Claude Opus 4.6 (Thinking)' },
+    workspaceDir: '/tmp/workspace',
+    prompt: 'hello',
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(applied.length, 1);
+  assert.equal(applied[0].provider, 'antigravity');
+  assert.equal(applied[0].modelSetting.value, 'Claude Opus 4.6 (Thinking)');
 });
 
 test('createRunnerExecutor routes Claude long runtime to the hot-session runner', async () => {

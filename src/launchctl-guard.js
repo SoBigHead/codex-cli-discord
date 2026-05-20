@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 export const PROTECTED_SERVICE_LABELS = Object.freeze([
   'com.atou.agents-in-discord',
   'com.atou.agents-in-discord.claude',
+  'com.atou.agents-in-discord.antigravity',
   'com.atou.agents-in-discord.gemini',
   'com.atou.codex-discord-bot',
   'com.atou.codex-discord-bot.claude',
