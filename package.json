@@ -1,6 +1,6 @@
 {
   "name": "agents-in-discord",
-  "version": "0.12.20",
+  "version": "0.12.21",
   "description": "Run and manage multiple CLI agents from Discord threads.",
   "license": "MIT",
   "author": "ATou",
